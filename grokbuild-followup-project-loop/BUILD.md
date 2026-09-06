@@ -54,7 +54,7 @@ None at runtime. Workflow metadata plus one new script and one test under `scrip
 Not completed yet.
 
 ## Review
-Plan approval: none
+Plan approval: `D01-PLAN-3` APPROVE_PLAN — reviewer `bc-47689815-05ac-546c-a664-8c14964723be`, contract `34f89916…6fafa`, candidate/baseline `4047d511…e5290`, HEAD `a70852a5`.
 Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
 
@@ -75,6 +75,12 @@ New blocker:
 1. Tests bullet 5 ("`check-code-quality-gates.py --mode final` still exits 0") is unsatisfiable at baseline and outside the Files constraint: at `4047d511…` it exits 1 on pre-existing `FILES_OVER_1K_BUDGET` (82 files ≥1000 lines > budget 77), deterministic, not environmental. Rewrite as non-regression vs baseline (same failing gate set = exactly `FILES_OVER_1K_BUDGET` count=82; no new failing gate; optional hook gate PASS). And CI Done-when bullet must state placement: the new pin-check step must run **before** the existing `Code quality gates` step in the `frontend` job (natural slot: right after `actions/checkout`), otherwise it never executes.
 Observations: state exit-code precedence when NETWORK and exit-1 verdicts co-occur (suggest exit 2 wins); define the `--refs-json` shape for "repo failed"; tag-object of tag X with comment Y → `TAG_OBJECT` before `REF_MISMATCH`; `dtolnay` `stable` moves per Rust release → predictable red until re-pin (fail-closed, within recorded authority); AGENTS.md says "tag" — `refs/heads/stable` is the sanctioned exception from D01-PLAN-1; adapter substitution note repeated.
 
+### D01-PLAN-3 — APPROVE_PLAN (revised proposal #2; recorded verbatim summary)
+Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-47689815-05ac-546c-a664-8c14964723be`, worktree `/tmp/loop-review/D01-PLAN-3` @ `a70852a5`.
+Contract `34f89916…6fafa` (match). Candidate before/after `4047d511…e5290` (unchanged, clean-tree); code diff vs `ea4ec712` empty. Final porcelain empty.
+D01-PLAN-2 blocker resolved: reviewer ran `check-code-quality-gates.py --mode final` → exit 1, exactly `FILES_OVER_1K_BUDGET` count=82 (baseline in Constraints accurate); CI placement after `actions/checkout` (L17) verified coherent with `frontend` job order (checkout → pnpm/action-setup → setup-node → deps hygiene → pnpm install → … → Code quality gates L35–36). D01-PLAN-1 blockers remain resolved. Live ls-remote reconfirmed all six intended refs (3 annotated: pnpm v4.0.0, rust-cache v2.7.7, tauri-action v0.5.17; lightweight: checkout v4.2.2, setup-node v4.0.3; branch: dtolnay refs/heads/stable). Retired SHAs present today (real delta). 14 `uses:` lines, six repos. No blockers.
+Observations: record the `refs/heads/stable` exception in archive/proof for slice 09; note expected `UNKNOWN_SHA` cadence for dtolnay; hyphen vs underscore name and optional hook are reasonable; test must add `scripts/` to `sys.path`; optional fixture for REF_MISMATCH with unknown label; adapter veto clause applies.
+
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06). The pack was written for Antigravity `invoke_subagent`; that tool does not exist in this runtime. The equivalent independent-subagent primitive here is the Cursor `Task` tool (`subagent_type=generalPurpose`), which runs each worker in a fresh, separate context with no access to coordinator or sibling reasoning. Binding:
 - Coordinator = this Cursor Cloud Agent session (sole writer of protocol files under `grokbuild-followup-project-loop/`).
@@ -83,9 +89,9 @@ Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, rec
 - Runtime inventory: Task results are terminal on return; there is no sidebar/interim state. No second coordinator exists.
 Deviation notice: LOOP.md says stop with Human required if `invoke_subagent` is missing. Coordinator judged the intent (independent, non-persona-switched Builder/Reviewer; no faked review) is satisfied by the Task adapter and proceeded; the user may veto this substitution, in which case all approvals recorded under this adapter are void.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only; no code drift).
-Worker / role / phase: Reviewer / plan review (revised proposal #2) / slice 01
-Dispatch ID / launch state / input identity: `D01-PLAN-3` / launching / candidate `4047d511…e5290`, contract `34f89916…6fafa`
-Pending result / last consumed dispatch: none / `D01-REVISE-2` (Builder agent `bc-fc2e3cc8…` resumed; returned revised Goal–Tests with an itemized diff vs D01-REVISE-1; verified baseline gates exit 1 on `FILES_OVER_1K_BUDGET` count=82; no edits, porcelain empty; coordinator applied the itemized edits verbatim.)
+Worker / role / phase: Builder / Building (implementation) / slice 01
+Dispatch ID / launch state / input identity: `D01-BUILD-1` / launching / baseline candidate `4047d511…e5290`, contract `34f89916…6fafa`, plan approval `D01-PLAN-3`
+Pending result / last consumed dispatch: none / `D01-PLAN-3`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -96,18 +102,19 @@ Contract identity: `34f899167e3be150a4df07c5b83fe521d3ca70af21a23f42d314411cdac6
 Candidate snapshot: none (plan phase; equals baseline)
 Rejection count: 2 (limit 3 — one more REJECT on this slice → Human required)
 Consecutive no-progress repairs: 0
-Open acceptance gaps / prior failing evidence: D01-PLAN-2 blocker 1 (Tests bullet 5 unsatisfiable at baseline; CI step placement). D01-PLAN-1 blockers 1–2 closed by D01-PLAN-2.
+Open acceptance gaps / prior failing evidence: none (plan approved D01-PLAN-3)
 Repair awaiting review: false
 Review events:
 - E1 / `D01-PLAN-1` / plan / REJECT_PLAN / contract `a72182e1…bbcd`, candidate `4047d511…e5290` / gaps: blockers 1–2 / rejection count 0→1
 - E2 / `D01-PLAN-2` / plan / REJECT_PLAN / contract `a5324838…18a3`, candidate `4047d511…e5290` / prior gaps 1–2 resolved; new gap: Tests bullet 5 + CI placement / rejection count 1→2
+- E3 / `D01-PLAN-3` / plan / APPROVE_PLAN / contract `34f89916…6fafa`, candidate `4047d511…e5290` / all gaps resolved / rejection count 2 (unchanged; plan approval does not reset)
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
 Advance phase: none
 Next slice ID / draft: none
 
 ## Status
-Proposed
+Building (plan approved `D01-PLAN-3`; passed through Not started on Builder dispatch `D01-BUILD-1`)
 
 ## Next
-Coordinator: when authorized, bind Antigravity tool names, capture review inputs, persist a pending plan-review dispatch, and invoke an independent Reviewer. Do not implement slice 01 before APPROVE_PLAN.
+Builder `D01-BUILD-1` implements the accepted contract in `/workspace` and returns proposed Proof; coordinator then commits the candidate, records candidate identity, and dispatches an independent implementation review in an isolated worktree. If interrupted: check `git -C /workspace status --porcelain=v1`; if Builder edits exist, treat them as the candidate and proceed to commit + implementation review (do not re-dispatch Builder without reconciling).
