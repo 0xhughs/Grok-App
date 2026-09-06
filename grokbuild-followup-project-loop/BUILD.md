@@ -91,7 +91,7 @@ Caveats: checker lowercases `owner/repo` for caching/JSON lookup (output echoes 
 
 ## Review
 Plan approval: `D01-PLAN-3` APPROVE_PLAN — reviewer `bc-47689815-05ac-546c-a664-8c14964723be`, contract `34f89916…6fafa`, candidate/baseline `4047d511…e5290`, HEAD `a70852a5`.
-Implementation approval: none
+Implementation approval: `D01-IMPL-1` APPROVE_IMPLEMENTATION — reviewer `bc-344acbd1-99d0-5d20-9938-dd72bea78e1e`, contract `34f89916…6fafa` (= plan-approval contract), candidate `8c79e574…341e` (HEAD `73193a0e` code commit; reviewed at `4a73cd46`), no acceptance gaps. Final counters frozen: rejections 2 (both plan phase), no-progress repairs 0.
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
 
 ### D01-PLAN-1 — REJECT_PLAN (recorded verbatim summary)
@@ -111,6 +111,14 @@ New blocker:
 1. Tests bullet 5 ("`check-code-quality-gates.py --mode final` still exits 0") is unsatisfiable at baseline and outside the Files constraint: at `4047d511…` it exits 1 on pre-existing `FILES_OVER_1K_BUDGET` (82 files ≥1000 lines > budget 77), deterministic, not environmental. Rewrite as non-regression vs baseline (same failing gate set = exactly `FILES_OVER_1K_BUDGET` count=82; no new failing gate; optional hook gate PASS). And CI Done-when bullet must state placement: the new pin-check step must run **before** the existing `Code quality gates` step in the `frontend` job (natural slot: right after `actions/checkout`), otherwise it never executes.
 Observations: state exit-code precedence when NETWORK and exit-1 verdicts co-occur (suggest exit 2 wins); define the `--refs-json` shape for "repo failed"; tag-object of tag X with comment Y → `TAG_OBJECT` before `REF_MISMATCH`; `dtolnay` `stable` moves per Rust release → predictable red until re-pin (fail-closed, within recorded authority); AGENTS.md says "tag" — `refs/heads/stable` is the sanctioned exception from D01-PLAN-1; adapter substitution note repeated.
 
+### D01-IMPL-1 — APPROVE_IMPLEMENTATION (recorded verbatim summary)
+Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-344acbd1-99d0-5d20-9938-dd72bea78e1e`, worktree `/tmp/loop-review/D01-IMPL-1` @ `4a73cd46` (code commit `73193a0e`; `73193a0e..4a73cd46` outside pack dir empty).
+Contract `34f89916…6fafa` = D01-PLAN-3 approval contract. Candidate before/after `8c79e574…341e` (unchanged, clean-tree). Final porcelain empty.
+Diff scope: exactly `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `scripts/check-code-quality-gates.py`, `scripts/check_workflow_pins.py` (A), `scripts/check_workflow_pins_test.py` (A). No src/, src-tauri/, remote-bridge/, package, or docs changes.
+Own live `git ls-remote --tags --heads` on all six repos: 14/14 `uses:` SHAs equal the peeled/tip id of the ref named in the comment; 3 annotated tags pinned to `^{}` ids; `refs/heads/stable` = `6bed0761…` unmoved since Builder; Proof lines byte-identical to live; four retired SHAs 0 hits in workflows and in all six listings.
+Evidence: unittest 28 OK (also under `unshare -rn`); live checker `pins=14 OK=14 exit=0`; own mutations → UNKNOWN_SHA/1, TAG_OBJECT/1, NETWORK/2, NETWORK+flip/2, absent repo/2, MALFORMED/1 (`@v4`, missing comment), REF_MISMATCH/1, tag-object with foreign comment → TAG_OBJECT, live nonexistent repo → NETWORK/2 no hang; output format matches contract. Source verified: `classify()` order MALFORMED→NETWORK→TAG_OBJECT→UNKNOWN_SHA→REF_MISMATCH→OK; `exit_code_for()` 2 before 1; one lister call per lowercase repo; timeout 60s; `GIT_TERMINAL_PROMPT=0`; `load_refs_json` handles pairs / `{"error"}` / absent. Gates: candidate exit 1 single `[FAIL] FILES_OVER_1K_BUDGET count=82` + `[PASS] WORKFLOW_PINS_FORMAT pins=14`; baseline (`git archive ea4ec712`) identical single FAIL; new gate does no network. YAML: `frontend` step 1 = pin check, immediately after checkout, before pnpm/action-setup, pnpm install, Code quality gates.
+Done-when, Tests, Constraints, Out, invariants: all mapped, no gaps. Observations: gate lambda parses twice (harmless); fixture branch-head SHAs will drift but are offline-only; dtolnay `stable` cadence recorded for slice 09.
+
 ### D01-PLAN-3 — APPROVE_PLAN (revised proposal #2; recorded verbatim summary)
 Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-47689815-05ac-546c-a664-8c14964723be`, worktree `/tmp/loop-review/D01-PLAN-3` @ `a70852a5`.
 Contract `34f89916…6fafa` (match). Candidate before/after `4047d511…e5290` (unchanged, clean-tree); code diff vs `ea4ec712` empty. Final porcelain empty.
@@ -125,9 +133,9 @@ Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, rec
 - Runtime inventory: Task results are terminal on return; there is no sidebar/interim state. No second coordinator exists.
 Deviation notice: LOOP.md says stop with Human required if `invoke_subagent` is missing. Coordinator judged the intent (independent, non-persona-switched Builder/Reviewer; no faked review) is satisfied by the Task adapter and proceeded; the user may veto this substitution, in which case all approvals recorded under this adapter are void.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only; no code drift).
-Worker / role / phase: Reviewer / implementation review / slice 01
-Dispatch ID / launch state / input identity: `D01-IMPL-1` / launching / candidate `8c79e574…341e` (HEAD `73193a0e`), baseline `4047d511…e5290`, contract `34f89916…6fafa`, plan approval `D01-PLAN-3`
-Pending result / last consumed dispatch: none / `D01-BUILD-1` (Builder agent `bc-e498a22f-4af8-52a5-a10b-0c3efcc02493`; returned changed paths + proof; coordinator committed code as `73193a0e`)
+Worker / role / phase: none (slice shipped; advance in progress)
+Dispatch ID / launch state / input identity: none
+Pending result / last consumed dispatch: none / `D01-IMPL-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -136,7 +144,7 @@ Snapshot capture and recheck commands / coverage / exclusions:
 Baseline snapshot: code baseline `ea4ec712c1c1d5ef27b036b7999a2955dcf4a86c` (pack-only commits since do not change candidate digest), clean-tree, CANDIDATE `4047d511c0e72b72f81a552ea71f6f3bae19f7ce6efd7fbac193e2baf18e5290`
 Contract identity: `34f899167e3be150a4df07c5b83fe521d3ca70af21a23f42d314411cdac6fafa` (revised proposal #2; supersedes `a5324838…18a3`, `a72182e1…bbcd`)
 Candidate snapshot: HEAD `73193a0e03e46920abc40e2908a3ab288d64bf5b`, clean-tree, CANDIDATE `8c79e57482ff2996eb5fd37b802156219ae1ad6bb4f8ffa6bd78d32573d5341e`
-Rejection count: 2 (limit 3 — one more REJECT on this slice → Human required)
+Rejection count: 2 (frozen at implementation approval)
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none (plan approved D01-PLAN-3)
 Repair awaiting review: false
@@ -144,15 +152,14 @@ Review events:
 - E1 / `D01-PLAN-1` / plan / REJECT_PLAN / contract `a72182e1…bbcd`, candidate `4047d511…e5290` / gaps: blockers 1–2 / rejection count 0→1
 - E2 / `D01-PLAN-2` / plan / REJECT_PLAN / contract `a5324838…18a3`, candidate `4047d511…e5290` / prior gaps 1–2 resolved; new gap: Tests bullet 5 + CI placement / rejection count 1→2
 - E3 / `D01-PLAN-3` / plan / APPROVE_PLAN / contract `34f89916…6fafa`, candidate `4047d511…e5290` / all gaps resolved / rejection count 2 (unchanged; plan approval does not reset)
+- E4 / `D01-IMPL-1` / implementation / APPROVE_IMPLEMENTATION / contract `34f89916…6fafa`, candidate `8c79e574…341e` / no gaps / counters frozen: rejections 2, no-progress 0
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
-Advance phase: none
+Advance phase: archive pending
 Next slice ID / draft: none
 
 ## Status
-Ready for review (Builder `D01-BUILD-1` complete; candidate `73193a0e`)
+Shipped (implementation approved `D01-IMPL-1`; code commit `73193a0e`, candidate `8c79e574…341e`)
 
 ## Next
-Independent implementation review `D01-IMPL-1` in isolated worktree `/tmp/loop-review/D01-IMPL-1` @ `73193a0e`. On APPROVE_IMPLEMENTATION → Shipped, archive to `slices/01-restore-real-ci-pins.md`, advance to 02. On REJECT → rejection count 3 = limit → Human required.
-
-(Superseded) Builder `D01-BUILD-1` implements the accepted contract in `/workspace` and returns proposed Proof; coordinator then commits the candidate, records candidate identity, and dispatches an independent implementation review in an isolated worktree. If interrupted: check `git -C /workspace status --porcelain=v1`; if Builder edits exist, treat them as the candidate and proceed to commit + implementation review (do not re-dispatch Builder without reconciling).
+Coordinator: archive this page to `slices/01-restore-real-ci-pins.md`, add 01 to SLICES Shipped, select 02 as Now, dispatch Builder draft-proposal for 02 (no code edits), then replace BUILD.md with the 02 Proposed page.
