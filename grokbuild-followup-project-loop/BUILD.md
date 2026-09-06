@@ -62,16 +62,23 @@ The in-process Rust `remote_im` bridge (the bridge the app actually runs) never 
 Not completed yet.
 
 ## Review
-Plan approval: none
+Plan approval: `D02-PLAN-1` APPROVE_PLAN — reviewer `bc-ed077869-3870-5f1e-8a3c-711aaf139be9`, contract `f60bdebb…66ed`, candidate/baseline `8c79e574…341e`, HEAD `f5dcf026`.
 Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
+
+### D02-PLAN-1 — APPROVE_PLAN (recorded verbatim summary)
+Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-ed077869-3870-5f1e-8a3c-711aaf139be9`, worktree `/tmp/loop-review/D02-PLAN-1` @ `f5dcf026`.
+Contract `f60bdebb…66ed` (match). Candidate before/after `8c79e574…341e` (unchanged, clean-tree); code diff vs `73193a0e` empty. Final porcelain empty.
+Every file:line claim in the contract confirmed against source (outbound.rs :269–311, :341, :352, :376–399; runtime.rs :70–76, :96–98; engine.rs :2168/:2182/:2191, :300, :396; telegram.rs :173; bridge.rs :181/:189/:215–221/:252/:268; mod.rs :164, :210–217; RemoteImChannelPanel.tsx :356–359, :958–960; r4.test.ts :40–41; Cargo.toml `[lib] grok_app_lib`; lib.rs:146; remote_im/mod.rs:17; ci.yml:79–94). Grep criteria currently non-zero where they must become zero: `None => true` 1; `x == "*"` 1; `* for any` runtime.rs 1; `"allowFrom": "*"` engine.rs 1 + outbound.rs 3; `assert!(sender_allowed(…"*"` 2; DingTalk topic exclusion accurate. Proposed error text passes its own normative pattern; current literal fails it (test is real). `whoami` absent from engine.rs.
+Judgments: "wildcard poisons the whole list" consistent with fail-closed and r4.test.ts parity; "error text" in Now 02 = Rust bridge error per audit N2/§8; SLICES 09 amendment **within authority** (locked R4 + AGENTS docs-match-defaults; 09 inside target; no Held ID reopened; interim UI state fail-closed and recorded). No blockers.
+Observations: `regex` is not a dependency and Cargo.toml is frozen → implement the error-text pattern test with plain string checks (whole-word `any` via token split); `rg -c` prints nothing/exit 1 on zero matches → Proof should record exit status or `rg -n` "no matches"; `" * "` falls out of existing `.trim()` but still assert it; "allowed" does not match `for all`/`\bany\b`.
 
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Reviewer / plan review / slice 02
-Dispatch ID / launch state / input identity: `D02-PLAN-1` / launching / candidate `8c79e574…341e`, contract `f60bdebb…66ed`
-Pending result / last consumed dispatch: none / `D02-DRAFT-1` (Builder agent `bc-ff3de374-17be-59d4-a9b5-103f02fd3258`; returned Proposed page + grounding notes + a proposed SLICES 09 amendment; no edits, porcelain empty. Coordinator persisted the page verbatim and applied the 09 amendment in SLICES.md as a within-authority contract edit — see SLICES Later 09.)
+Worker / role / phase: Builder / Building (implementation) / slice 02
+Dispatch ID / launch state / input identity: `D02-BUILD-1` / launching / baseline candidate `8c79e574…341e`, contract `f60bdebb…66ed`, plan approval `D02-PLAN-1`
+Pending result / last consumed dispatch: none / `D02-PLAN-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -84,7 +91,8 @@ Rejection count: 0
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none
 Repair awaiting review: false
-Review events: none
+Review events:
+- E1 / `D02-PLAN-1` / plan / APPROVE_PLAN / contract `f60bdebb…66ed`, candidate `8c79e574…341e` / no gaps / rejection count 0
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
 Advance phase: none (slice 01 archive written and verified; 02 selected)
@@ -92,7 +100,7 @@ Next slice ID / draft: 03 (after 02 ships)
 Environment note: `cargo test` is linkable here — webkit2gtk-4.1 2.52.6, gtk+-3.0 3.24.41, libsoup-3.0, javascriptcoregtk-4.1, ayatana-appindicator3, librsvg installed via apt on 2026-09-06; a dependency requires Rust edition 2024 so `rustup toolchain install stable` (≥1.85) was installed and set default. Warm-up `cargo test --no-run` running in tmux session `cargo-warm` (log `/tmp/cargo-warm.log`).
 
 ## Status
-Proposed
+Building (plan approved `D02-PLAN-1`; passed through Not started on Builder dispatch `D02-BUILD-1`)
 
 ## Next
-Independent Reviewer plan review `D02-PLAN-1` in isolated worktree. Do not implement slice 02 before APPROVE_PLAN.
+Builder `D02-BUILD-1` implements the accepted contract in `/workspace` and returns proposed Proof; coordinator commits the candidate, records identity, dispatches implementation review `D02-IMPL-1`. If interrupted: check `git -C /workspace status --porcelain=v1`; if Builder edits exist treat them as the candidate and proceed to commit + review.
