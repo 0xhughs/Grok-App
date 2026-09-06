@@ -51,7 +51,43 @@ None at runtime. Workflow metadata plus one new script and one test under `scrip
 - Proof documents, per action repo, the exact `git ls-remote --tags --heads <url>` command and the verbatim output line(s) for the resolved ref (`refs/tags/<tag>` and `refs/tags/<tag>^{}` for annotated tags; the single line for lightweight tags and branches), and states which line was pinned.
 
 ## Proof
-Not completed yet.
+Builder `D01-BUILD-1` (agent `bc-e498a22f-4af8-52a5-a10b-0c3efcc02493`), implemented in `/workspace`, committed by coordinator as `73193a0e` (code-only commit). Candidate identity (clean-tree) `8c79e57482ff2996eb5fd37b802156219ae1ad6bb4f8ffa6bd78d32573d5341e`. Changed paths: `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `scripts/check-code-quality-gates.py` (optional offline gate `WORKFLOW_PINS_FORMAT`), new `scripts/check_workflow_pins.py`, new `scripts/check_workflow_pins_test.py`. Nothing outside the Files constraint.
+
+### Resolution (live, this session, 2026-09-06; raw listings saved outside the repo at `/tmp/pins/<owner>__<repo>.txt`)
+Method for every repo: `git ls-remote --tags --heads https://github.com/<owner>/<repo>` (exit 0 each). The `git ls-remote <url> <sha>` form is not used anywhere (checker, tests, workflows, proof). Pin map derived programmatically from the saved listings; no SHA typed by hand.
+
+| Command | Verbatim output line(s) for the intended ref | Pinned |
+|---|---|---|
+| `git ls-remote --tags --heads https://github.com/actions/checkout` | `11bd71901bbe5b1630ceea73d27597364c9af683	refs/tags/v4.2.2` (no `^{}` line → lightweight) | `11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2` (own line; unchanged vs e37d212, re-verified) |
+| `git ls-remote --tags --heads https://github.com/pnpm/action-setup` | `0c17529a66aca453f9227af23103ed11469b1e47	refs/tags/v4.0.0` / `fe02b34f77f8bc703788d5817da081398fad5dd2	refs/tags/v4.0.0^{}` | `fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0` (peeled `^{}` line; unchanged, re-verified). `0c17529a…` is the tag object, never valid |
+| `git ls-remote --tags --heads https://github.com/actions/setup-node` | `1e60f620b9541d16bece96c5465dc8ee9832be0b	refs/tags/v4.0.3` (lightweight) | `1e60f620b9541d16bece96c5465dc8ee9832be0b # v4.0.3` (own line; replaces fabricated `…e0b4`) |
+| `git ls-remote --tags --heads https://github.com/swatinem/rust-cache` | `400e7407cfd7a091e5fbb6afec01ec146c432b7c	refs/tags/v2.7.7` / `f0deed1e0edfc6a9be95417288c0e1099b1eeec3	refs/tags/v2.7.7^{}` | `f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7` (peeled; replaces fabricated `…165c`) |
+| `git ls-remote --tags --heads https://github.com/tauri-apps/tauri-action` | `ea1f12403fd95c98ee2fff70a34d5a818ceeb112	refs/tags/v0.5.17` / `2a8db2c169af2fdc695133781e27ecba52daea75	refs/tags/v0.5.17^{}` | `2a8db2c169af2fdc695133781e27ecba52daea75 # v0.5.17` (peeled; replaces fabricated `b70ec574…`) |
+| `git ls-remote --tags --heads https://github.com/dtolnay/rust-toolchain` | `6bed0761d98439e5a578e2877258200ad565ba87	refs/heads/stable` (no `refs/tags/stable` exists) | `6bed0761d98439e5a578e2877258200ad565ba87 # stable (refs/heads/stable)` (branch tip; replaces fabricated `4dd2f0b9…`) |
+
+No tag substitution was needed; all six intended refs exist. The four retired SHAs appear in none of the six listings.
+
+**`refs/heads/stable` exception (record for slice 09):** dtolnay/rust-toolchain publishes `stable` as a branch, not a tag; the pin is the branch tip re-resolved at build time. Each Rust stable release moves that branch, after which the CI pin check reports `dtolnay/rust-toolchain@6bed0761… -> UNKNOWN_SHA` (exit 1) until an explicit re-pin — deliberate fail-closed behaviour per Out.
+
+### Tests → evidence (all run in this session by Builder; coordinator re-ran rows 1–2)
+| Tests bullet | Command | Result |
+|---|---|---|
+| Fixture tests, no network | `python3 -m unittest scripts/check_workflow_pins_test.py` | `Ran 28 tests … OK`, exit 0. `subprocess.run/Popen/check_output/check_call/call` patched to raise in every test; `SubprocessStubTest` proves the default lister under the stub yields `NETWORK`. Also executed under `unshare -rn` (no network namespace): 28 OK. Coordinator re-run: 28 OK. |
+| Live checker | `python3 scripts/check_workflow_pins.py` | exit 0; 14 lines all `-> OK [<ref> = <sha>]` (ci.yml:17,26,27,62,63,75; release.yml:75,81,84,105,110,286,381,412); `pins=14 OK=14 exit=0`. Coordinator re-run identical. |
+| Flipped SHA | `/tmp/pins/mut/ci-flipped.yml` (setup-node `1e60…` → `0e60…`) with `--refs-json /tmp/pins/refs.json` (full live listings) | `…:27 actions/setup-node@0e60f620… # v4.0.3 -> UNKNOWN_SHA [sha matches no ref tip or peeled id; refs/tags/v4.0.3 = 1e60f620…]`, `pins=6 UNKNOWN_SHA=1, OK=5 exit=1` |
+| Tag-object substituted | `/tmp/pins/mut/release-tagobj.yml` (tauri-action `2a8db2c1…` → `ea1f1240…`) | `…:286 tauri-apps/tauri-action@ea1f1240… # v0.5.17 -> TAG_OBJECT [… is the tag object of refs/tags/v0.5.17; refs/tags/v0.5.17 = 2a8db2c1…]`, exit 1 |
+| One repo `{"error":…}` | `--refs-json /tmp/pins/refs-one-error.json /tmp/pins/mut/ci.yml` | `…:75 swatinem/rust-cache@f0deed1e… # v2.7.7 -> NETWORK [listing failed: simulated: git ls-remote exit 128]`, `pins=6 NETWORK=1, OK=5 exit=2` |
+| NETWORK + exit-1 co-occur | same error fixture on `ci-flipped.yml` | `UNKNOWN_SHA` (line 27) and `NETWORK` (line 75) both reported; `exit=2` |
+| Real git failure path | temp workflow pointing at a nonexistent repo, live | `-> NETWORK [listing failed: … exit 128 fatal: could not read Username … terminal prompts disabled]`, exit 2, no hang (`GIT_TERMINAL_PROMPT=0`, timeout) |
+| Retired SHAs | `grep -rc <sha> .github/workflows/` ×4 | `ci.yml:0 release.yml:0` for each of `1e60f620…e0b4`, `f0deed1e…165c`, `b70ec574…9cb4`, `4dd2f0b9…f9d1` (coordinator re-ran) |
+| Quality gates non-regression | `python3 scripts/check-code-quality-gates.py --mode final` | exit 1; `[PASS] WORKFLOW_PINS_FORMAT … pins=14`; `[FAIL] FILES_OVER_1K_BUDGET … count=82`; `RESULT: FAIL (1 gate(s))`; exactly one `[FAIL]`. Baseline HEAD in a throwaway worktree: identical single FAIL, count=82. Hook negative-tested on a temp tree with `actions/setup-node@v4` → gate FAIL with the malformed pin listed. |
+| Compile | `python3 -m py_compile` on the three Python files | exit 0 |
+| YAML sanity | PyYAML 6.0.1 `safe_load` on both files | ci.yml: jobs `frontend,rust`, 21 steps, 6 `uses`; release.yml: jobs `publish,assemble-updater,checksums`, 19 steps, 8 `uses`; frontend order `actions/checkout → Verify GitHub Actions pins → pnpm/action-setup → actions/setup-node`. Before/after `diff` restricted to `uses:` lines shows only the 7 SHA/comment changes; the only non-`uses:` diff is the inserted step in ci.yml. |
+
+**GitHub Actions was not executed from this environment.** Per SLICES.md release-gate fallback, the evidence is the local live run (exit 0, 14 OK) plus the offline fixture tests. `cargo test` was not run for this slice (no Rust changes).
+
+Caveats: checker lowercases `owner/repo` for caching/JSON lookup (output echoes workflow spelling); zero `uses:` lines found ⇒ exit 1 (fail closed).
+
 
 ## Review
 Plan approval: `D01-PLAN-3` APPROVE_PLAN — reviewer `bc-47689815-05ac-546c-a664-8c14964723be`, contract `34f89916…6fafa`, candidate/baseline `4047d511…e5290`, HEAD `a70852a5`.
@@ -89,9 +125,9 @@ Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, rec
 - Runtime inventory: Task results are terminal on return; there is no sidebar/interim state. No second coordinator exists.
 Deviation notice: LOOP.md says stop with Human required if `invoke_subagent` is missing. Coordinator judged the intent (independent, non-persona-switched Builder/Reviewer; no faked review) is satisfied by the Task adapter and proceeded; the user may veto this substitution, in which case all approvals recorded under this adapter are void.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only; no code drift).
-Worker / role / phase: Builder / Building (implementation) / slice 01
-Dispatch ID / launch state / input identity: `D01-BUILD-1` / launching / baseline candidate `4047d511…e5290`, contract `34f89916…6fafa`, plan approval `D01-PLAN-3`
-Pending result / last consumed dispatch: none / `D01-PLAN-3`
+Worker / role / phase: Reviewer / implementation review / slice 01
+Dispatch ID / launch state / input identity: `D01-IMPL-1` / launching / candidate `8c79e574…341e` (HEAD `73193a0e`), baseline `4047d511…e5290`, contract `34f89916…6fafa`, plan approval `D01-PLAN-3`
+Pending result / last consumed dispatch: none / `D01-BUILD-1` (Builder agent `bc-e498a22f-4af8-52a5-a10b-0c3efcc02493`; returned changed paths + proof; coordinator committed code as `73193a0e`)
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -99,7 +135,7 @@ Snapshot capture and recheck commands / coverage / exclusions:
 - Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/` (protocol + artifacts).
 Baseline snapshot: code baseline `ea4ec712c1c1d5ef27b036b7999a2955dcf4a86c` (pack-only commits since do not change candidate digest), clean-tree, CANDIDATE `4047d511c0e72b72f81a552ea71f6f3bae19f7ce6efd7fbac193e2baf18e5290`
 Contract identity: `34f899167e3be150a4df07c5b83fe521d3ca70af21a23f42d314411cdac6fafa` (revised proposal #2; supersedes `a5324838…18a3`, `a72182e1…bbcd`)
-Candidate snapshot: none (plan phase; equals baseline)
+Candidate snapshot: HEAD `73193a0e03e46920abc40e2908a3ab288d64bf5b`, clean-tree, CANDIDATE `8c79e57482ff2996eb5fd37b802156219ae1ad6bb4f8ffa6bd78d32573d5341e`
 Rejection count: 2 (limit 3 — one more REJECT on this slice → Human required)
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none (plan approved D01-PLAN-3)
@@ -114,7 +150,9 @@ Advance phase: none
 Next slice ID / draft: none
 
 ## Status
-Building (plan approved `D01-PLAN-3`; passed through Not started on Builder dispatch `D01-BUILD-1`)
+Ready for review (Builder `D01-BUILD-1` complete; candidate `73193a0e`)
 
 ## Next
-Builder `D01-BUILD-1` implements the accepted contract in `/workspace` and returns proposed Proof; coordinator then commits the candidate, records candidate identity, and dispatches an independent implementation review in an isolated worktree. If interrupted: check `git -C /workspace status --porcelain=v1`; if Builder edits exist, treat them as the candidate and proceed to commit + implementation review (do not re-dispatch Builder without reconciling).
+Independent implementation review `D01-IMPL-1` in isolated worktree `/tmp/loop-review/D01-IMPL-1` @ `73193a0e`. On APPROVE_IMPLEMENTATION → Shipped, archive to `slices/01-restore-real-ci-pins.md`, advance to 02. On REJECT → rejection count 3 = limit → Human required.
+
+(Superseded) Builder `D01-BUILD-1` implements the accepted contract in `/workspace` and returns proposed Proof; coordinator then commits the candidate, records candidate identity, and dispatches an independent implementation review in an isolated worktree. If interrupted: check `git -C /workspace status --porcelain=v1`; if Builder edits exist, treat them as the candidate and proceed to commit + implementation review (do not re-dispatch Builder without reconciling).
