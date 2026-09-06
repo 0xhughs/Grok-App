@@ -65,6 +65,14 @@ Blockers:
 2. Annotated-tag rule: state that for annotated tags the pin is the peeled commit and the checker must not accept tag-object ids.
 Observations: adapter substitution judged to preserve independence (fresh context, isolated worktree, identities unchanged); verdict void if user vetoes substitution. Suggests CI step for the checker, offline-deterministic fixture test, Proof records tag→peeled SHA pairs, pin comments name resolved ref.
 
+### D01-PLAN-2 — REJECT_PLAN (revised proposal; recorded verbatim summary)
+Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-2de87ff9-68db-53f3-8484-9a2d084527ee`, worktree `/tmp/loop-review/D01-PLAN-2` @ `7518b974`.
+Contract `a5324838…18a3` (match). Candidate before/after `4047d511…e5290` (unchanged, clean-tree); `git diff --stat ea4ec712 HEAD -- . ':!grokbuild-followup-project-loop'` empty. Final porcelain empty.
+D01-PLAN-1 blockers 1 and 2: both **resolved** (resolution method + `refs/heads/stable` + vacuous form banned + UNKNOWN_SHA/NETWORK distinct; tag-object never valid, checker peels, fixture (c)). All six intended refs confirmed live. Retired SHAs currently present (so the zero-count criterion is a real delta).
+New blocker:
+1. Tests bullet 5 ("`check-code-quality-gates.py --mode final` still exits 0") is unsatisfiable at baseline and outside the Files constraint: at `4047d511…` it exits 1 on pre-existing `FILES_OVER_1K_BUDGET` (82 files ≥1000 lines > budget 77), deterministic, not environmental. Rewrite as non-regression vs baseline (same failing gate set = exactly `FILES_OVER_1K_BUDGET` count=82; no new failing gate; optional hook gate PASS). And CI Done-when bullet must state placement: the new pin-check step must run **before** the existing `Code quality gates` step in the `frontend` job (natural slot: right after `actions/checkout`), otherwise it never executes.
+Observations: state exit-code precedence when NETWORK and exit-1 verdicts co-occur (suggest exit 2 wins); define the `--refs-json` shape for "repo failed"; tag-object of tag X with comment Y → `TAG_OBJECT` before `REF_MISMATCH`; `dtolnay` `stable` moves per Rust release → predictable red until re-pin (fail-closed, within recorded authority); AGENTS.md says "tag" — `refs/heads/stable` is the sanctioned exception from D01-PLAN-1; adapter substitution note repeated.
+
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06). The pack was written for Antigravity `invoke_subagent`; that tool does not exist in this runtime. The equivalent independent-subagent primitive here is the Cursor `Task` tool (`subagent_type=generalPurpose`), which runs each worker in a fresh, separate context with no access to coordinator or sibling reasoning. Binding:
 - Coordinator = this Cursor Cloud Agent session (sole writer of protocol files under `grokbuild-followup-project-loop/`).
@@ -73,9 +81,9 @@ Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, rec
 - Runtime inventory: Task results are terminal on return; there is no sidebar/interim state. No second coordinator exists.
 Deviation notice: LOOP.md says stop with Human required if `invoke_subagent` is missing. Coordinator judged the intent (independent, non-persona-switched Builder/Reviewer; no faked review) is satisfied by the Task adapter and proceeded; the user may veto this substitution, in which case all approvals recorded under this adapter are void.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only; no code drift).
-Worker / role / phase: Reviewer / plan review (revised proposal) / slice 01
-Dispatch ID / launch state / input identity: `D01-PLAN-2` / launching / candidate `4047d511…e5290`, contract `a5324838…18a3`
-Pending result / last consumed dispatch: none / `D01-REVISE-1` (Builder agent `bc-fc2e3cc8-f6d0-5fab-bbaa-97456a30bc8a`; returned revised Goal–Tests, no edits, porcelain empty; coordinator persisted verbatim. Coordinator decisions on Builder concerns: keep tips-only `UNKNOWN_SHA` for moved `dtolnay` branch tip (fail-closed re-pin signal; no fetch-by-SHA fallback); accept underscore module name `check_workflow_pins.py`; only the new test runs in CI; GH Actions cannot be exercised here → release gate uses the SLICES fallback.)
+Worker / role / phase: Builder / revise rejected proposal #2 (no code edits) / slice 01
+Dispatch ID / launch state / input identity: `D01-REVISE-2` / launching / candidate `4047d511…e5290`, contract `a5324838…18a3`, blocker from D01-PLAN-2
+Pending result / last consumed dispatch: none / `D01-PLAN-2`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -84,12 +92,13 @@ Snapshot capture and recheck commands / coverage / exclusions:
 Baseline snapshot: code baseline `ea4ec712c1c1d5ef27b036b7999a2955dcf4a86c` (pack-only commits since do not change candidate digest), clean-tree, CANDIDATE `4047d511c0e72b72f81a552ea71f6f3bae19f7ce6efd7fbac193e2baf18e5290`
 Contract identity: `a5324838efbad39c16fa508e284e0d6eef8f64a372d72e7d72700377adc818a3` (revised proposal; superseded `a72182e1…bbcd`)
 Candidate snapshot: none (plan phase; equals baseline)
-Rejection count: 1
+Rejection count: 2 (limit 3 — one more REJECT on this slice → Human required)
 Consecutive no-progress repairs: 0
-Open acceptance gaps / prior failing evidence: D01-PLAN-1 blockers 1–2 (resolution method precision; annotated-tag peel rule)
+Open acceptance gaps / prior failing evidence: D01-PLAN-2 blocker 1 (Tests bullet 5 unsatisfiable at baseline; CI step placement). D01-PLAN-1 blockers 1–2 closed by D01-PLAN-2.
 Repair awaiting review: false
 Review events:
 - E1 / `D01-PLAN-1` / plan / REJECT_PLAN / contract `a72182e1…bbcd`, candidate `4047d511…e5290` / gaps: blockers 1–2 / rejection count 0→1
+- E2 / `D01-PLAN-2` / plan / REJECT_PLAN / contract `a5324838…18a3`, candidate `4047d511…e5290` / prior gaps 1–2 resolved; new gap: Tests bullet 5 + CI placement / rejection count 1→2
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
 Advance phase: none
