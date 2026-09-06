@@ -30,6 +30,7 @@ The in-process Rust `remote_im` bridge (the bridge the app actually runs) never 
 - `docs/llm-wiki/remote-im.md` (internal agent wiki listing `*` as an allow_from default/hint at lines 162, 341, 360, 385, 445, 498, 548, 566) and `docs/features/remote-security.md:19` (describes the UI's "open (`*`)" aggregation, which remains an accurate description of the UI until slice 09) — slice 09.
 - Adding array-shaped `allow_from` parsing, `allow_chat`/`adminFrom` semantics, per-channel ACL changes, or any new ACL feature.
 - Automatic rewriting or migration of stored ACLs (no config is edited on the user's behalf).
+- Fixing the pre-existing `cargo fmt --check` and `cargo clippy -D warnings` failures in files outside the Files constraint (see Constraints: baseline lint state). Residual for release review.
 - Slices 03–09.
 
 ## Constraints
@@ -39,7 +40,7 @@ The in-process Rust `remote_im` bridge (the bridge the app actually runs) never 
 - Held gates untouched: `allow_remote_yolo` (R2) plumbing through `start_runtime(allow_remote_yolo)` and `Engine::new(..)` is unchanged; Ask remains the default permission policy; nothing in `mirror/`, `permission.rs`, or capabilities is edited.
 - Keep `require_mention`, `secret_or_opt`, `OutboundRouter` and all non-ACL code in `outbound.rs` byte-identical apart from the ACL functions, their doc comments, and `mod tests`.
 - Error text must satisfy the normative pattern in Done when; it must not reference `/whoami` (the Rust engine has no such command — `rg whoami src-tauri/src/remote_im/engine.rs` = 0).
-- Rust style: `cargo fmt` clean; `cargo clippy --all-targets -- -D warnings` clean (CI runs both with `-D warnings`, `.github/workflows/ci.yml` rust job).
+- Rust style: the three slice files are `rustfmt --check` clean and introduce zero clippy findings. Baseline lint state (comparison point, verified by coordinator at candidate `8c79e574…341e` with rustc 1.98.1 stable): `cargo fmt --all -- --check` exits 1 with diffs only in files outside `src-tauri/src/remote_im/` (`agent_home_config.rs, batch_agents.rs, cli_install.rs, cli_update.rs, mirror/mod.rs, mirror/rpc.rs, models_aux.rs, official_aux.rs, path_scope.rs, permission.rs, relay_stream_proxy.rs, secrets.rs, serve.rs, session_manager/control.rs, store.rs, wallpaper_source.rs`); `cargo clippy --all-targets -- -D warnings` exits non-zero with exactly three lints, none in slice files: `src/batch_agents.rs:79` (`unnecessary_map_or`), `src/path_scope.rs:129` (`manual_contains`), `src/remote_im/channels/wecom.rs:210` (`too_many_arguments`). These pre-date this slice, are outside its Files constraint, and must be neither fixed nor added to here. (Contract amended by coordinator after `D02-BUILD-1` surfaced them; within authority — same class as the slice 01 gates-baseline fix.)
 - Do not claim any cargo command passed unless it was run in the Builder session; record exact commands and result lines in Proof.
 
 ## Data / state impact
@@ -52,17 +53,42 @@ The in-process Rust `remote_im` bridge (the bridge the app actually runs) never 
 - Targeted ACL tests (must be run in-session): `cargo test --manifest-path src-tauri/Cargo.toml --lib remote_im::outbound::tests` — expected: the five tests named in Done when plus the two pre-existing non-ACL tests (`register_always_injects_instance_id`, `require_mention_honors_acl_and_group_reply_all`) pass; `0 failed`.
 - Whole live-bridge module: `cargo test --manifest-path src-tauri/Cargo.toml --lib remote_im::` — expected `0 failed`, and `remote_im::engine::tests::handle_slash_p_does_not_deadlock_on_pending_lookup` is listed as `ok` (proves the fixture change kept it live).
 - Full suite as CI runs it: `cd src-tauri && cargo test` — expected `0 failed` (Linux leg; webkit2gtk/gtk and a current stable toolchain are installed in this environment so it links).
-- Lint as CI runs it: `cd src-tauri && cargo fmt --all -- --check` exits 0; `cd src-tauri && cargo clippy --all-targets -- -D warnings` exits 0.
+- Lint non-regression versus the baseline recorded in Constraints: `cd src-tauri && rustfmt --edition 2021 --check src/remote_im/outbound.rs src/remote_im/runtime.rs src/remote_im/engine.rs` exits 0; `cd src-tauri && cargo fmt --all -- --check` reports diffs only in the baseline file list (no `remote_im/` path appears); `cd src-tauri && cargo clippy --all-targets` (non-fatal) reports exactly the three baseline lints at the three baseline locations and no finding in `src/remote_im/outbound.rs`, `runtime.rs`, or `engine.rs`. `cargo fmt --all -- --check` and `cargo clippy --all-targets -- -D warnings` therefore still exit non-zero solely because of the pre-existing baseline; record both exit codes in Proof.
 - Negative proof that the flip is real: Proof includes the `git diff` hunks showing outbound.rs:381 and :388 (`assert!(sender_allowed(... "*" ...))`) removed and outbound.rs:397 negation removed, and states that the pre-change test suite would fail against the new code (the two assertions are contradictory with the new semantics).
 - Grep criteria (each exact command and count recorded in Proof): `rg -c 'None => true' src-tauri/src/remote_im/outbound.rs` → 0; `rg -c 'x == "\*"' src-tauri/src/remote_im/outbound.rs` → 0; `rg -c -i '\* for any|or \*|\(or \*|\* for all' src-tauri/src/remote_im/` → 0; `rg -c '(allowFrom|allow_from)":\s*"\*"' src-tauri/src/remote_im/` → 0; `rg -n 'assert!\(sender_allowed\(.*"\*"' src-tauri/src/remote_im/` → no matches; `rg -n '"\*"' src-tauri/src/remote_im/` → exactly the two DingTalk topic lines (`channels/dingtalk.rs`, `protocol_start_tests.rs`).
 - Scope check: `git diff --stat <baseline>..HEAD -- . ':!grokbuild-followup-project-loop'` lists exactly the three Files.
 - No `pnpm vitest` run is required (no TS/i18n change); `remote-bridge/` tests are not part of this slice's proof.
 
 ## Proof
-Not completed yet.
+Builder `D02-BUILD-1` (agent `bc-c09d31e7-99df-504e-a326-9b1aeff530e7`), implemented in `/workspace` at HEAD `7089d02c`, committed by coordinator as `fd142233` (code-only). Candidate identity (clean-tree) `2a3620d159da5a3960a7b59e66e8908de27727a3c265ad0a0760235a5bb7390b`. Changed paths: `src-tauri/src/remote_im/engine.rs` (1 line), `outbound.rs` (+165/−37 incl. tests), `runtime.rs` (+11/−3). Rust `rustc 1.98.1 (48a229cea 2026-09-01)` stable. Logs under `/tmp/build02/`.
+
+Implementation decisions: `allow_from_list` narrowed to `Vec<String>` (both in-file callers updated; no external callers). Wildcard = entry exactly `*` after trim (Node `acl.ts:10` parity), implemented via `const WILDCARD: char = '*'` + `is_wildcard_entry` so no `"*"` string literal appears in the live bridge; tests build wildcard ACLs via a `star()` helper. `ALLOW_FROM_BLOCKED_ERR` is `pub(crate)` in `outbound.rs`; `runtime.rs` tracks `acl_blocked` and returns the ACL text only when no instance survived and at least one was ACL-skipped.
+
+### Done when → evidence
+- ACL semantics: new `allow_from_list` — `raw` = `allowFrom`→`allow_from` `.as_str().unwrap_or("").trim()`; empty → `vec![]`; split on `,`, trim, drop empties; any wildcard entry → `vec![]`; else the list. Non-string values fall through `as_str()` → empty (unchanged fail-closed). Test `allow_from_list_never_yields_open` covers 16 deny shapes (`{}`, `null`, `""`, `"   "`, `",,"`, `"*"`, `" * "`, `allow_from:"*"`, `"alice, *"`, `"*, alice"`, `["*"]`, `[]`, `["alice"]`, `42`, `true`, object) and `"alice, bob"` → exactly `["alice","bob"]` — ok.
+- `sender_allowed` = `allow_from_list(acl).iter().any(|x| x == sender_id)`. `rg -c 'None => true' src-tauri/src/remote_im/outbound.rs` → no output, exit 1 (0 matches); `rg -c 'x == "\*"' …outbound.rs` → no output, exit 1 (0 matches).
+- `allow_from_blocks_enable` = `allow_from_list(acl).is_empty()`; test `blocks_enable_without_explicit_allow_from` asserts blocks for `{}`, `""`, `"   "`, `"*"`, `" * "`, `"alice, *"`, `["*"]`; not-blocks for `"alice"`, `"alice, bob"` — ok. Caller `runtime.rs:70` unchanged.
+- Error text constant (190 bytes), verbatim: `allow_from must list explicit sender ids; empty or catch-all entries are refused. Add the platform user ids allowed to talk to this bot in Settings → Remote IM before enabling this channel`. Test `enable_error_text_requires_explicit_ids_and_never_offers_wildcard` (plain string checks; whole-word `any` via non-alphanumeric split) — ok. Scratch cross-check: OLD literal fails the same checks (`missing 'explicit sender id'`, `contains *`, `contains word any`). `rg -n whoami src-tauri/src/remote_im/engine.rs` → no matches.
+- Grep criteria (cwd `/workspace`): `rg -c -i '\* for any|or \*|\(or \*|\* for all' src-tauri/src/remote_im/` → no output, exit 1; `rg -c '(allowFrom|allow_from)":\s*"\*"' src-tauri/src/remote_im/` → no output, exit 1; `rg -n 'assert!\(sender_allowed\(.*"\*"' src-tauri/src/remote_im/` → no matches, exit 1; `rg -n '"\*"' src-tauri/src/remote_im/` → exactly `channels/dingtalk.rs:68: "topic": "*"` and `protocol_start_tests.rs:62: …"topic":"*"…`.
+- Tests (targeted): `cargo test --manifest-path src-tauri/Cargo.toml --lib remote_im::outbound::tests` → 7 tests ok: `allow_from_list_never_yields_open`, `allow_from_explicit_list_allows_only_listed_senders`, `allow_from_fails_closed_for_missing_empty_and_wildcard`, `enable_error_text_requires_explicit_ids_and_never_offers_wildcard`, `blocks_enable_without_explicit_allow_from`, `require_mention_honors_acl_and_group_reply_all`, `register_always_injects_instance_id`; `test result: ok. 7 passed; 0 failed; 0 ignored; 1636 filtered out`.
+- Negative proof: old `mod tests` (saved `/tmp/build02/old_tests.txt`) run against new code → `blocks_enable_without_explicit_allow_from ... FAILED`, `missing_allow_from_denies_by_default ... FAILED` (`assertion failed: !allow_from_blocks_enable(&json!({ "allowFrom": "*" }))`, `assertion failed: sender_allowed(&json!({ "allowFrom": "*" }), "anyone")`); `2 passed; 2 failed`. Diff hunks remove `:381` and `:388` `assert!(sender_allowed(… "*" …))` lines and the `:397` negation; comment corrected to "any `*` entry … refuse enable; only a non-empty list of explicit ids may start".
+- Fixture: engine.rs `- acl: json!({ "allowFrom": "*" })` → `+ acl: json!({ "allowFrom": "peer@im.wechat" })`; fixture `sender_id: "peer@im.wechat"` (engine.rs:2191, unchanged). `cargo test … --lib remote_im::` → `remote_im::engine::tests::handle_slash_p_does_not_deadlock_on_pending_lookup ... ok`; `145 passed; 0 failed; 1498 filtered out`.
+- Doc comment: now states `*` (alone, padded, or as any entry) → deny, "No open value is representable"; old "`*` → open (None)" deleted.
+- Bridge-level error honesty (inspect): runtime.rs adds `let mut acl_blocked = false;`, sets it at the guard, and `if instances.is_empty() { if acl_blocked { return Err(outbound::ALLOW_FROM_BLOCKED_ERR.into()); } return Err("no enabled channel with credentials".into()); }`. `set_instance_last_error` retained. No unit test (start_runtime reads global config) — inspect criterion.
+- Call sites: `rg -n 'allow_from_list|sender_allowed|allow_from_blocks_enable' src-tauri/src/` → engine.rs:300, engine.rs:396, telegram.rs:173, runtime.rs:70 only; none edited.
+- Scope: porcelain and `git diff --stat -- . ':!grokbuild-followup-project-loop'` list exactly the three Files. `outbound.rs` hunks only `@@ -266,48 +266,63 @@` (ACL fns, doc, constant) and `@@ -372,29 +387,137 @@` (`mod tests`).
+
+### Tests → evidence
+- Targeted: 7 passed / 0 failed (above). Whole module: 145 passed / 0 failed; deadlock test ok.
+- Full suite `cd src-tauri && cargo test` (CARGO_EXIT=0): lib `test result: ok. 1642 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 5.37s`; bin `0 passed; 0 failed`; doc-tests `0 passed; 0 failed`. 1642 = baseline 1639 + 3 (two ACL tests replaced by five). Baseline at `8c79e574…341e` run by coordinator: `1639 passed; 0 failed; 1 ignored`.
+- Lint non-regression: `rustfmt --edition 2021 --check src/remote_im/outbound.rs src/remote_im/runtime.rs src/remote_im/engine.rs` → exit 0. `cargo fmt --all -- --check` → exit 1, diffs only in the 16 baseline files (`/tmp/build02/fmt_dirty_files.txt`; `rg remote_im` on the list → 0; coordinator independently reproduced the same 16-file list). `cargo clippy --all-targets -- -D warnings` → exit 101 with exactly 3 lints: `src/batch_agents.rs:79` (`unnecessary_map_or`), `src/path_scope.rs:129` (`manual_contains`), `src/remote_im/channels/wecom.rs:210` (`too_many_arguments`); non-fatal `cargo clippy --all-targets` → exit 0, "generated 3 warnings", zero findings in `outbound.rs`/`runtime.rs`/`engine.rs` (`/tmp/build02/clippy.log`). All three lints pre-date the slice (blame `e37d212`, `e37d212`, `a084acec`).
+- No `pnpm vitest` run (no TS change).
+
+Caveats: `is_wildcard_entry` matches only an entry exactly `*`; ids like `ali*ce` remain literal (no widening/narrowing). Residual for release review: CI `rust` job would fail `fmt --check` / `clippy -D warnings` on the pre-existing baseline with a current stable toolchain (outside target; CI green is not a release gate).
+
 
 ## Review
-Plan approval: `D02-PLAN-1` APPROVE_PLAN — reviewer `bc-ed077869-3870-5f1e-8a3c-711aaf139be9`, contract `f60bdebb…66ed`, candidate/baseline `8c79e574…341e`, HEAD `f5dcf026`.
+Plan approval: **superseded** — `D02-PLAN-1` APPROVE_PLAN covered contract `f60bdebb…66ed`; coordinator amended Tests/Constraints/Out (lint baseline) after `D02-BUILD-1` → contract `47dc7bad…dd3c`, status back to Proposed; fresh plan review `D02-PLAN-2` required. (Prior record retained below.)
 Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
 
@@ -76,17 +102,17 @@ Observations: `regex` is not a dependency and Cargo.toml is frozen → implement
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Builder / Building (implementation) / slice 02
-Dispatch ID / launch state / input identity: `D02-BUILD-1` / launching / baseline candidate `8c79e574…341e`, contract `f60bdebb…66ed`, plan approval `D02-PLAN-1`
-Pending result / last consumed dispatch: none / `D02-PLAN-1`
+Worker / role / phase: Reviewer / plan review (amended contract; candidate already built) / slice 02
+Dispatch ID / launch state / input identity: `D02-PLAN-2` / launching / candidate `2a3620d1…390b` (HEAD `fd142233`), baseline `8c79e574…341e`, contract `47dc7bad…dd3c`
+Pending result / last consumed dispatch: none / `D02-BUILD-1` (Builder agent `bc-c09d31e7-99df-504e-a326-9b1aeff530e7`; returned 3 changed files + proof + honest report that fmt/clippy fail at baseline outside slice files; coordinator verified the 16-file fmt list and 3 clippy lints, committed code as `fd142233`, amended contract, returned to Proposed)
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
 - Coverage: entire tracked tree outside the pack dir (source, tests, `.github/workflows/`, `scripts/`, lockfiles, docs, capabilities, assets).
 - Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/` (protocol + artifacts).
 Baseline snapshot: slice 01 shipped candidate — HEAD `73193a0e03e46920abc40e2908a3ab288d64bf5b` (code), clean-tree, CANDIDATE `8c79e57482ff2996eb5fd37b802156219ae1ad6bb4f8ffa6bd78d32573d5341e`
-Contract identity: `f60bdebb90c30d06df8f19dcb401ffc3ca83b4edf9993dba870a52d975fb66ed`
-Candidate snapshot: none (plan phase; equals baseline)
+Contract identity: `47dc7bad1290c6be312c42f92202a7758f0f74be7c95c79db6b8a765e075dd3c` (amended after D02-BUILD-1; supersedes `f60bdebb…66ed`)
+Candidate snapshot: HEAD `fd142233dd2235cb3832a87b00bdb95d83cb74f2` (code commit), clean-tree, CANDIDATE `2a3620d159da5a3960a7b59e66e8908de27727a3c265ad0a0760235a5bb7390b`
 Rejection count: 0
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none
@@ -100,7 +126,7 @@ Next slice ID / draft: 03 (after 02 ships)
 Environment note: `cargo test` is linkable here — webkit2gtk-4.1 2.52.6, gtk+-3.0 3.24.41, libsoup-3.0, javascriptcoregtk-4.1, ayatana-appindicator3, librsvg installed via apt on 2026-09-06; a dependency requires Rust edition 2024 so `rustup toolchain install stable` (≥1.85) was installed and set default. Warm-up `cargo test --no-run` running in tmux session `cargo-warm` (log `/tmp/cargo-warm.log`).
 
 ## Status
-Building (plan approved `D02-PLAN-1`; passed through Not started on Builder dispatch `D02-BUILD-1`)
+Proposed (contract amended after Building; candidate `fd142233` exists and awaits plan re-approval then implementation review)
 
 ## Next
-Builder `D02-BUILD-1` implements the accepted contract in `/workspace` and returns proposed Proof; coordinator commits the candidate, records identity, dispatches implementation review `D02-IMPL-1`. If interrupted: check `git -C /workspace status --porcelain=v1`; if Builder edits exist treat them as the candidate and proceed to commit + review.
+Reviewer `D02-PLAN-2` plan-reviews the amended contract (Tests/Constraints/Out lint-baseline change only). On APPROVE_PLAN → status Ready for review → dispatch `D02-IMPL-1` implementation review of candidate `fd142233`. On REJECT → Builder revises contract text (no code changes unless the contract requires).
