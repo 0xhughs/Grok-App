@@ -4,32 +4,49 @@ Slice: 01 Restore real CI pins
 Archive: slices/01-restore-real-ci-pins.md
 
 ## Goal
-Every `uses:` pin in `.github/workflows/ci.yml` and `release.yml` is a 40-character SHA that exists on the upstream action repo at the intended tag. A local checker fails fabricated pins so C1 cannot regress the same way.
+Every `uses:` in `.github/workflows/ci.yml` and `.github/workflows/release.yml` is pinned to the 40-hex **peeled commit id** of a named upstream ref (`refs/tags/<tag>` or `refs/heads/<branch>`), obtained from `git ls-remote --tags --heads https://github.com/<owner>/<repo>`, and each pin's trailing comment names that ref. A local checker with an injectable ref listing rejects fabricated, malformed, tag-object, mismatched, and stale pins, fails closed on network error while reporting it distinctly, and runs in CI, so C1/N7 cannot regress the same way.
 
 ## Done when
-- C1/N7: `actions/setup-node`, `dtolnay/rust-toolchain`, `swatinem/rust-cache`, and `tauri-apps/tauri-action` pins resolve via `git ls-remote https://github.com/<owner>/<repo> <sha>` or `refs/tags/<tag>`. Do not invent hex. Do not keep the current fabricated SHAs.
-- `actions/checkout` and `pnpm/action-setup` remain real SHAs; re-verify them the same way.
-- A script (e.g. `scripts/check-workflow-pins.py` or an addition to `scripts/check-code-quality-gates.py`) parses both workflow files, rejects non-40-hex `uses:`, and fails if `git ls-remote` cannot see that SHA. A unit/fixture test feeds a mangled SHA and expects failure.
-- No application runtime behaviour changes in this slice.
+- Pin format: every `uses:` value in both workflow files matches `<owner>/<repo>[/<subpath>]@<40 lowercase hex>` followed by a comment `# <ref-label>` on the same line. `<ref-label>` is either `<tag>` (meaning `refs/tags/<tag>`) or `<name> (refs/heads/<name>)` for a branch. Floating tags (`@v4`, `@stable`), short SHAs, uppercase hex, `docker://`, local `./` actions, and missing comments are all failures.
+- Resolution method (single source of truth): the pin for a ref is the **peeled commit id** from `git ls-remote --tags --heads https://github.com/<owner>/<repo>`: the `refs/tags/<tag>^{}` line for an annotated tag; the ref's own line for a lightweight tag (no `^{}` line exists) or a branch. The `git ls-remote <url> <sha>` form is not used anywhere (it filters by ref name and exits 0 with empty output for any SHA).
+- Annotated-tag rule: a tag-object id (the id on the `refs/tags/<tag>` line when a `refs/tags/<tag>^{}` line also exists) is never a valid pin. The checker peels and reports such a pin as `TAG_OBJECT`, not as OK.
+- Intended refs, resolved by the implementing Builder at build time (never copied from this contract or from e37d212): `actions/checkout` → `refs/tags/v4.2.2`; `pnpm/action-setup` → `refs/tags/v4.0.0`; `actions/setup-node` → `refs/tags/v4.0.3`; `swatinem/rust-cache` → `refs/tags/v2.7.7`; `tauri-apps/tauri-action` → `refs/tags/v0.5.17`; `dtolnay/rust-toolchain` → `refs/heads/stable` tip (no `refs/tags/stable` exists) with comment `# stable (refs/heads/stable)`. `actions/checkout` and `pnpm/action-setup` are re-verified by the same method even if their SHAs do not change. If a named tag no longer exists at build time, use the newest tag within the same major and record the substitution in Proof.
+- The SHAs `1e60f620b9541d16bece96c5465dc8ee9832e0b4`, `f0deed1e0edfc6a9be954172b8c0ab617c49165c`, `b70ec574c8034d6beea488582d1c9ef2cf1c9cb4`, and `4dd2f0b9f5e4277b5a8eb2a6fb368c22119fa9d1` appear nowhere under `.github/workflows/` (`grep -rc` = 0 each).
+- Checker `scripts/check_workflow_pins.py` (stdlib only): parses every `uses:` in both files (default) or in paths given as arguments; runs one `git ls-remote --tags --heads` per distinct `<owner>/<repo>`; classifies each pin as exactly one of `OK`, `MALFORMED`, `UNKNOWN_SHA` (SHA equals no branch/lightweight-tag tip and no `^{}` peeled id in the listing), `TAG_OBJECT`, `REF_MISMATCH` (SHA is a real peeled id but not the one for the ref named in the comment), or `NETWORK` (`git ls-remote` exited non-zero, timed out, or produced unparsable output). It prints one line per pin `<file>:<line> <owner>/<repo>@<sha> # <ref-label> -> <verdict> [<resolved ref> = <sha>]`. Exit 0 only when every pin is `OK`; exit 1 when any pin is `MALFORMED`/`UNKNOWN_SHA`/`TAG_OBJECT`/`REF_MISMATCH`; exit 2 when any repo listing failed (`NETWORK`, fail closed, never reported as `UNKNOWN_SHA`).
+- Injectable ref listing: the checker's core function accepts a `list_refs(owner_repo) -> list[(sha, refname)]` callable (default = run `git ls-remote`), and the CLI accepts `--refs-json <path>` mapping `owner/repo` to that list so tests and offline runs need no network.
+- Fixture test `scripts/check_workflow_pins_test.py` (`unittest`, stdlib only, no network; `subprocess` is stubbed so a test that reaches `git` fails): (a) the repaired workflow files plus a fixture listing built from the Proof `ref → peeled SHA` pairs → all `OK`, exit 0; (b) one SHA with one hex digit flipped → `UNKNOWN_SHA`, exit 1; (c) an annotated tag's tag-object id substituted for its peeled commit → `TAG_OBJECT`, exit 1; (d) a floating `@v4` and a missing comment → `MALFORMED`, exit 1; (e) a real SHA paired with a comment naming a different ref → `REF_MISMATCH`, exit 1; (f) `list_refs` raising or returning a failure for one repo → `NETWORK`, exit 2, and the affected pin is not labelled `UNKNOWN_SHA`.
+- CI: the `frontend` job in `ci.yml` gains one step that runs `python3 -m unittest` on `scripts/check_workflow_pins_test.py` and then `python3 scripts/check_workflow_pins.py` live (GitHub-hosted runners have outbound git to github.com). Release gate fallback per SLICES.md: if GH Actions cannot run here, the local live run plus the fixture tests are the evidence.
+- No application runtime behaviour changes; no files outside the Files constraint change.
 
 ## Out
 - Making the full Rust `cargo test` job green in environments without webkit2gtk (report residual if GH Actions still cannot run here).
 - Rewriting release publishing logic beyond pin repair.
+- Pinning the Rust toolchain version itself (`refs/heads/stable` of dtolnay/rust-toolchain keeps `toolchain: stable`; rustc selection is unchanged from pre-e37d212).
+- Automated re-pinning (Dependabot/Renovate) or a fetch-by-SHA reachability fallback; a moved branch tip is a deliberate `UNKNOWN_SHA` failure that requires an explicit re-pin.
+- Running the pre-existing `scripts/*_test.py` files in CI.
 - Slices 02–09.
 
 ## Constraints
-- Files: `.github/workflows/ci.yml`, `.github/workflows/release.yml`, pin-check script under `scripts/`, optional hook from `scripts/check-code-quality-gates.py`.
-- Resolve SHAs from `git ls-remote` of the action repository tags used before e37d212 if those tags still exist; otherwise pick the current matching major tag and record which tag was resolved.
-- Do not pin `owner/action@v4` floating tags.
-- Do not restore 06d82f9 tag-only pins as the end state; SHA-of-tag is required.
+- Files: `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `scripts/check_workflow_pins.py`, `scripts/check_workflow_pins_test.py`, optional hook from `scripts/check-code-quality-gates.py`. The optional hook may add only an offline format gate (every `uses:` is `owner/repo@40-hex # ref-label`, reusing the checker's parser); live `git ls-remote` resolution stays in the dedicated CI step so `--mode final` keeps working offline.
+- Resolve every pin with `git ls-remote --tags --heads https://github.com/<owner>/<repo>` at build time and pin the peeled commit id as defined in Done when. The intended refs are the ones named in the e37d212 pin comments (same majors as the pre-e37d212 floating `@v4`/`@v2`/`@v0`/`@stable`); if an intended tag is gone, pick the newest tag within the same major and record which ref was resolved. Never copy a SHA from a comment, a review, this contract, or memory.
+- `dtolnay/rust-toolchain` has no `refs/tags/stable`; pin the `refs/heads/stable` tip re-resolved at build time and comment it `# stable (refs/heads/stable)`.
+- Do not pin `owner/action@v4` floating tags or branch names. Do not restore 06d82f9 tag-only pins as the end state; SHA-of-ref is required.
+- Do not use `git ls-remote <url> <sha>` anywhere (checker, Proof, or docs); it does not test object existence.
+- Checker rules: peel annotated tags (compare against `^{}` ids); a tag-object id is never accepted; the SHA must be the peeled id of the ref named in its comment; a SHA that matches nothing in the listing is `UNKNOWN_SHA`; listing failure is `NETWORK` with exit 2, distinct from exit 1. One `git ls-remote` per distinct repo, with a timeout.
+- Comment format is normative: `# <tag>` ⇒ `refs/tags/<tag>`; `# <name> (refs/heads/<name>)` ⇒ branch. No other comment shapes.
+- Checker and test are stdlib-only Python 3 (no PyYAML; line-based `uses:` parsing is sufficient and must also catch `uses:` lines under `steps:` in `release.yml` that follow a `- name:` line).
+- Proof records `tag/branch → peeled SHA` pairs verbatim from live `git ls-remote` output, per repo.
 
 ## Data / state impact
-None. Workflow metadata only.
+None at runtime. Workflow metadata plus one new script and one test under `scripts/`. CI's `frontend` job gains one outbound `git ls-remote` per distinct action repo (six today).
 
 ## Tests
-- Pin-check script exits 0 on the repaired workflows.
-- Pin-check script exits non-zero on a copy with one SHA flipped.
-- Document the exact `git ls-remote` commands and output used to obtain each SHA in Proof.
+- `python3 -m unittest scripts/check_workflow_pins_test.py` exits 0 with network disabled (cases a–f above; `subprocess` stubbed so no test can reach `git`).
+- `python3 scripts/check_workflow_pins.py` (live network) exits 0 on the repaired workflows and prints every pin as `OK` with its resolved ref.
+- `python3 scripts/check_workflow_pins.py --refs-json <fixture>` on a copy of the workflows with one SHA flipped exits 1 reporting `UNKNOWN_SHA`; on a copy with a tag-object id substituted exits 1 reporting `TAG_OBJECT`; with a fixture that marks one repo as failed exits 2 reporting `NETWORK`.
+- `grep -rc` of each of the four retired SHAs under `.github/workflows/` is 0.
+- `python3 scripts/check-code-quality-gates.py --mode final` still exits 0 (with or without the optional hook).
+- Proof documents, per action repo, the exact `git ls-remote --tags --heads <url>` command and the verbatim output line(s) for the resolved ref (`refs/tags/<tag>` and `refs/tags/<tag>^{}` for annotated tags; the single line for lightweight tags and branches), and states which line was pinned.
 
 ## Proof
 Not completed yet.
@@ -56,16 +73,16 @@ Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, rec
 - Runtime inventory: Task results are terminal on return; there is no sidebar/interim state. No second coordinator exists.
 Deviation notice: LOOP.md says stop with Human required if `invoke_subagent` is missing. Coordinator judged the intent (independent, non-persona-switched Builder/Reviewer; no faked review) is satisfied by the Task adapter and proceeded; the user may veto this substitution, in which case all approvals recorded under this adapter are void.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only; no code drift).
-Worker / role / phase: Builder / revise rejected proposal (no code edits) / slice 01
-Dispatch ID / launch state / input identity: `D01-REVISE-1` / launching / candidate `4047d511…e5290`, contract `a72182e1…bbcd`, blockers from D01-PLAN-1
-Pending result / last consumed dispatch: none / `D01-PLAN-1`
+Worker / role / phase: Reviewer / plan review (revised proposal) / slice 01
+Dispatch ID / launch state / input identity: `D01-PLAN-2` / launching / candidate `4047d511…e5290`, contract `a5324838…18a3`
+Pending result / last consumed dispatch: none / `D01-REVISE-1` (Builder agent `bc-fc2e3cc8-f6d0-5fab-bbaa-97456a30bc8a`; returned revised Goal–Tests, no edits, porcelain empty; coordinator persisted verbatim. Coordinator decisions on Builder concerns: keep tips-only `UNKNOWN_SHA` for moved `dtolnay` branch tip (fail-closed re-pin signal; no fetch-by-SHA fallback); accept underscore module name `check_workflow_pins.py`; only the new test runs in CI; GH Actions cannot be exercised here → release gate uses the SLICES fallback.)
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
 - Coverage: entire tracked tree outside the pack dir (source, tests, `.github/workflows/`, `scripts/`, lockfiles, docs, capabilities, assets).
 - Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/` (protocol + artifacts).
 Baseline snapshot: code baseline `ea4ec712c1c1d5ef27b036b7999a2955dcf4a86c` (pack-only commits since do not change candidate digest), clean-tree, CANDIDATE `4047d511c0e72b72f81a552ea71f6f3bae19f7ce6efd7fbac193e2baf18e5290`
-Contract identity: `a72182e10fe7f75e8f7f1e63e7a2bd0a1ec0280d6aff2d69ef12af117946bbcd` (will change when the revised proposal is persisted)
+Contract identity: `a5324838efbad39c16fa508e284e0d6eef8f64a372d72e7d72700377adc818a3` (revised proposal; superseded `a72182e1…bbcd`)
 Candidate snapshot: none (plan phase; equals baseline)
 Rejection count: 1
 Consecutive no-progress repairs: 0
