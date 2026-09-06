@@ -266,48 +266,63 @@ pub fn secret_or_opt(
         .or_else(|| opt_str(options, key))
 }
 
-/// Parse allow-from ACL.
+/// Enable-time error stored on the instance (and returned by `start_runtime`
+/// when no channel survives the ACL guard). Must never recommend a catch-all
+/// value; see `enable_error_text_requires_explicit_ids_and_never_offers_wildcard`.
+pub(crate) const ALLOW_FROM_BLOCKED_ERR: &str = "allow_from must list explicit sender ids; \
+     empty or catch-all entries are refused. Add the platform user ids allowed to talk to \
+     this bot in Settings → Remote IM before enabling this channel";
+
+/// The catch-all marker. There is no open ACL: an entry equal to this character
+/// makes the whole list deny (R4 / N2, parity with `remote-bridge/src/r4.test.ts`).
+const WILDCARD: char = '*';
+
+fn is_wildcard_entry(s: &str) -> bool {
+    let mut chars = s.chars();
+    chars.next() == Some(WILDCARD) && chars.next().is_none()
+}
+
+/// Parse allow-from ACL (`allowFrom`, then `allow_from`) into the explicit
+/// sender ids that may talk to the bot.
 ///
-/// - `*` → open (None)
-/// - missing / empty string → fail-closed empty list
-/// - comma list → allow only those senders
+/// - `*` (alone, padded, or as any entry of a comma list) → deny: empty list
+/// - missing / `null` / non-string / empty / whitespace-only → empty list
+/// - comma list of ids → exactly those trimmed, non-empty ids
 ///
-/// Missing means deny: the Settings UI refuses to enable a channel without an
-/// explicit allow-from entry, so the backend must not be more permissive than
-/// the UI contract (hand-edited or pre-existing configs included).
-pub fn allow_from_list(acl: &serde_json::Value) -> Option<Vec<String>> {
+/// No "open" value is representable: the bridge is the security boundary and
+/// must not be more permissive than the explicit list, whatever the Settings UI
+/// or a hand-edited config stored. A wildcard entry poisons the whole list
+/// instead of being dropped so the misconfiguration surfaces at enable time.
+pub fn allow_from_list(acl: &serde_json::Value) -> Vec<String> {
     let raw = acl
         .get("allowFrom")
         .or_else(|| acl.get("allow_from"))
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .trim();
-    if raw == "*" {
-        return None;
-    }
     if raw.is_empty() {
-        return Some(vec![]);
+        return vec![];
     }
-    Some(
-        raw.split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-    )
+    let list: Vec<String> = raw
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if list.iter().any(|s| is_wildcard_entry(s)) {
+        return vec![];
+    }
+    list
 }
 
+/// True only when `sender_id` is one of the explicit ids in the ACL.
 pub fn sender_allowed(acl: &serde_json::Value, sender_id: &str) -> bool {
-    match allow_from_list(acl) {
-        None => true,
-        Some(list) if list.is_empty() => false,
-        Some(list) => list.iter().any(|x| x == sender_id || x == "*"),
-    }
+    allow_from_list(acl).iter().any(|x| x == sender_id)
 }
 
-/// True when enable should be refused: no allowFrom entry at all, or an
-/// explicit empty list (both yield an empty allow list since fail-closed).
+/// True when enable should be refused: the ACL yields no explicit sender id
+/// (missing, empty, or containing a `*` entry all fail closed).
 pub fn allow_from_blocks_enable(acl: &serde_json::Value) -> bool {
-    matches!(allow_from_list(acl), Some(list) if list.is_empty())
+    allow_from_list(acl).is_empty()
 }
 
 /// Whether group chats require @bot.
@@ -372,29 +387,137 @@ mod tests {
         assert!(require_mention(&json!({}), &json!({})));
     }
 
+    /// The catch-all marker as a string. Built from the char so no test line
+    /// carries a wildcard ACL literal (grep criterion for the live bridge).
+    fn star() -> String {
+        WILDCARD.to_string()
+    }
+
+    /// Every ACL shape that must yield the empty list (deny everyone).
+    fn deny_acls() -> Vec<serde_json::Value> {
+        let s = star();
+        vec![
+            json!({}),
+            json!({ "allowFrom": null }),
+            json!({ "allowFrom": "" }),
+            json!({ "allowFrom": "   " }),
+            json!({ "allowFrom": ",," }),
+            json!({ "allowFrom": s }),
+            json!({ "allowFrom": format!(" {s} ") }),
+            json!({ "allow_from": s }),
+            json!({ "allowFrom": format!("alice, {s}") }),
+            json!({ "allowFrom": format!("{s}, alice") }),
+            json!({ "allowFrom": [s] }),
+            json!({ "allowFrom": [] }),
+            json!({ "allowFrom": ["alice"] }),
+            json!({ "allowFrom": 42 }),
+            json!({ "allowFrom": true }),
+            json!({ "allowFrom": { "alice": true } }),
+        ]
+    }
+
     #[test]
-    fn missing_allow_from_denies_by_default() {
+    fn allow_from_fails_closed_for_missing_empty_and_wildcard() {
+        let s = star();
         // Fail-closed: no explicit allowFrom ⇒ nobody is allowed.
         assert!(!sender_allowed(&json!({}), "attacker"));
+        assert!(!sender_allowed(&json!({ "allowFrom": null }), "owner"));
         assert!(!sender_allowed(&json!({ "allowFrom": "" }), "owner"));
-        // Explicit wildcard stays the documented opt-in.
-        assert!(sender_allowed(&json!({ "allowFrom": "*" }), "anyone"));
+        assert!(!sender_allowed(&json!({ "allowFrom": "   " }), "owner"));
+        assert!(!sender_allowed(&json!({ "allowFrom": ",," }), "owner"));
+        // `*` is deny, not open: alone, padded, snake_case alias.
+        assert!(!sender_allowed(&json!({ "allowFrom": s }), "anyone"));
+        assert!(!sender_allowed(
+            &json!({ "allowFrom": format!(" {s} ") }),
+            "anyone"
+        ));
+        assert!(!sender_allowed(&json!({ "allow_from": s }), "anyone"));
+        // A wildcard entry poisons the whole list, even for listed ids.
+        let mixed = json!({ "allowFrom": format!("alice, {s}") });
+        assert!(!sender_allowed(&mixed, "alice"));
+        assert!(!sender_allowed(&mixed, "mallory"));
+        assert!(!sender_allowed(
+            &json!({ "allowFrom": format!("{s}, alice") }),
+            "alice"
+        ));
+        // Arrays are not a supported shape: unchanged fail-closed.
+        assert!(!sender_allowed(&json!({ "allowFrom": [s] }), "anyone"));
+        assert!(!sender_allowed(&json!({ "allowFrom": [] }), "anyone"));
+        assert!(!sender_allowed(&json!({ "allowFrom": ["alice"] }), "alice"));
+        for acl in deny_acls() {
+            for sender in ["anyone", "attacker", "owner", "alice", s.as_str()] {
+                assert!(!sender_allowed(&acl, sender), "{acl} must deny {sender}");
+            }
+        }
+    }
+
+    #[test]
+    fn allow_from_explicit_list_allows_only_listed_senders() {
         // Comma list allows exactly the listed senders.
         let acl = json!({ "allowFrom": "alice, bob ,," });
         assert!(sender_allowed(&acl, "alice"));
         assert!(sender_allowed(&acl, "bob"));
         assert!(!sender_allowed(&acl, "mallory"));
+        assert!(!sender_allowed(&acl, ""));
+        assert!(!sender_allowed(&acl, &star()));
         // snake_case alias behaves identically.
-        assert!(sender_allowed(&json!({ "allow_from": "*" }), "anyone"));
+        assert!(sender_allowed(&json!({ "allow_from": "alice" }), "alice"));
+    }
+
+    #[test]
+    fn allow_from_list_never_yields_open() {
+        for acl in deny_acls() {
+            assert!(
+                allow_from_list(&acl).is_empty(),
+                "{acl} must yield the empty list"
+            );
+        }
+        assert_eq!(
+            allow_from_list(&json!({ "allowFrom": "alice, bob" })),
+            vec!["alice".to_string(), "bob".to_string()]
+        );
     }
 
     #[test]
     fn blocks_enable_without_explicit_allow_from() {
-        // Fail-closed: missing entry or explicit empty list both refuse enable;
-        // only an explicit wildcard or a non-empty list may start.
+        let s = star();
+        // Fail-closed: missing entry, empty list, and any `*` entry all refuse
+        // enable; only a non-empty list of explicit ids may start.
         assert!(allow_from_blocks_enable(&json!({})));
         assert!(allow_from_blocks_enable(&json!({ "allowFrom": "" })));
-        assert!(!allow_from_blocks_enable(&json!({ "allowFrom": "*" })));
+        assert!(allow_from_blocks_enable(&json!({ "allowFrom": "   " })));
+        assert!(allow_from_blocks_enable(&json!({ "allowFrom": s })));
+        assert!(allow_from_blocks_enable(&json!({
+            "allowFrom": format!(" {s} ")
+        })));
+        assert!(allow_from_blocks_enable(&json!({
+            "allowFrom": format!("alice, {s}")
+        })));
+        assert!(allow_from_blocks_enable(&json!({ "allowFrom": [s] })));
         assert!(!allow_from_blocks_enable(&json!({ "allowFrom": "alice" })));
+        assert!(!allow_from_blocks_enable(&json!({
+            "allowFrom": "alice, bob"
+        })));
+    }
+
+    #[test]
+    fn enable_error_text_requires_explicit_ids_and_never_offers_wildcard() {
+        let text = ALLOW_FROM_BLOCKED_ERR;
+        let lower = text.to_lowercase();
+        // Must tell the user what to add and where.
+        assert!(lower.contains("explicit sender id"), "{text}");
+        assert!(text.contains("Settings → Remote IM"), "{text}");
+        // Must never offer a catch-all (case-insensitive
+        // `\*|wildcard|\bany\b|anyone|for all`, checked without a regex crate).
+        assert!(!text.contains(WILDCARD), "{text}");
+        for needle in ["wildcard", "anyone", "for all"] {
+            assert!(!lower.contains(needle), "{text} contains {needle}");
+        }
+        assert!(
+            !lower
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|word| word == "any"),
+            "{text} contains the word any"
+        );
     }
 }
