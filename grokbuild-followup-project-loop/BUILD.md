@@ -88,9 +88,17 @@ Caveats: `is_wildcard_entry` matches only an entry exactly `*`; ids like `ali*ce
 
 
 ## Review
-Plan approval: **superseded** — `D02-PLAN-1` APPROVE_PLAN covered contract `f60bdebb…66ed`; coordinator amended Tests/Constraints/Out (lint baseline) after `D02-BUILD-1` → contract `47dc7bad…dd3c`, status back to Proposed; fresh plan review `D02-PLAN-2` required. (Prior record retained below.)
+Plan approval: `D02-PLAN-2` APPROVE_PLAN — reviewer `bc-a4a329db-b3e7-53db-bfa5-b5c024d54b28`, contract `47dc7bad…dd3c` (amended), candidate `2a3620d1…390b`, HEAD `a5687d89`. (Earlier `D02-PLAN-1` APPROVE_PLAN covered the pre-amendment contract `f60bdebb…66ed`; superseded, record retained below.)
 Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
+
+### D02-PLAN-2 — APPROVE_PLAN (amended contract; recorded verbatim summary)
+Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-a4a329db-b3e7-53db-bfa5-b5c024d54b28`, worktree `/tmp/loop-review/D02-PLAN-2` @ `a5687d89`.
+Contract `47dc7bad…dd3c` (match); prior approved contract recomputed from `f5dcf026` = `f60bdebb…66ed` (match). Candidate before/after `2a3620d1…390b` (unchanged, clean-tree). Final porcelain empty.
+Contract diff prev→amended: exactly three hunks (Out bullet added; Constraints "Rust style" bullet replaced with baseline lint state; Tests lint bullet replaced with non-regression). Goal, Done when, Data/state and all other bullets byte-identical; AGENTS/LOOP/BUILDER/REVIEWER/identity.sh/SLICES unchanged.
+Baseline verified at pre-slice code `73193a0e` via `git archive` (rustc 1.98.1 / rustfmt 1.9.0 / clippy 0.1.98): `cargo fmt --all -- --check` exit 1 with exactly the 16 Constraints files, `remote_im` count 0; `cargo clippy --all-targets -- -D warnings` exit 101 with exactly `batch_agents.rs:79:19 unnecessary_map_or`, `path_scope.rs:129:44 manual_contains`, `remote_im/channels/wecom.rs:210:1 too_many_arguments`. Candidate fmt file set identical to baseline; slice files `rustfmt --check` exit 0.
+Judgments: (a) amendment within authority (LOOP "persist and return to Proposed"; slice 01 precedent; no security criterion, Held ID, or `allow_from` semantics touched; Builder reported, coordinator amended, plan re-reviewed); (b) amended Tests bullet observable and regression-sensitive for slice files; (c) Out excludes the fix and records the residual honestly (CI rust job runs fmt/clippy `-D warnings` on stable → CI red at baseline is pre-existing; CI green is not a release gate); (d) still one coherent slice. No blockers.
+Observations: baseline is toolchain-dependent (rustc 1.98.1 pinned in Constraints) — a later toolchain changing the set is bookkeeping, note for release review; implementation reviewer must recompute rather than trust Proof.
 
 ### D02-PLAN-1 — APPROVE_PLAN (recorded verbatim summary)
 Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-ed077869-3870-5f1e-8a3c-711aaf139be9`, worktree `/tmp/loop-review/D02-PLAN-1` @ `f5dcf026`.
@@ -102,9 +110,9 @@ Observations: `regex` is not a dependency and Cargo.toml is frozen → implement
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Reviewer / plan review (amended contract; candidate already built) / slice 02
-Dispatch ID / launch state / input identity: `D02-PLAN-2` / launching / candidate `2a3620d1…390b` (HEAD `fd142233`), baseline `8c79e574…341e`, contract `47dc7bad…dd3c`
-Pending result / last consumed dispatch: none / `D02-BUILD-1` (Builder agent `bc-c09d31e7-99df-504e-a326-9b1aeff530e7`; returned 3 changed files + proof + honest report that fmt/clippy fail at baseline outside slice files; coordinator verified the 16-file fmt list and 3 clippy lints, committed code as `fd142233`, amended contract, returned to Proposed)
+Worker / role / phase: Reviewer / implementation review / slice 02
+Dispatch ID / launch state / input identity: `D02-IMPL-1` / launching / candidate `2a3620d1…390b` (code HEAD `fd142233`), baseline `8c79e574…341e`, contract `47dc7bad…dd3c`, plan approval `D02-PLAN-2`
+Pending result / last consumed dispatch: none / `D02-PLAN-2`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -119,6 +127,8 @@ Open acceptance gaps / prior failing evidence: none
 Repair awaiting review: false
 Review events:
 - E1 / `D02-PLAN-1` / plan / APPROVE_PLAN / contract `f60bdebb…66ed`, candidate `8c79e574…341e` / no gaps / rejection count 0
+- (control) `D02-BUILD-1` Builder result consumed; contract amended by coordinator (not a review verdict; no counter change)
+- E2 / `D02-PLAN-2` / plan / APPROVE_PLAN / contract `47dc7bad…dd3c`, candidate `2a3620d1…390b` / no gaps / rejection count 0
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
 Advance phase: none (slice 01 archive written and verified; 02 selected)
@@ -126,7 +136,7 @@ Next slice ID / draft: 03 (after 02 ships)
 Environment note: `cargo test` is linkable here — webkit2gtk-4.1 2.52.6, gtk+-3.0 3.24.41, libsoup-3.0, javascriptcoregtk-4.1, ayatana-appindicator3, librsvg installed via apt on 2026-09-06; a dependency requires Rust edition 2024 so `rustup toolchain install stable` (≥1.85) was installed and set default. Warm-up `cargo test --no-run` running in tmux session `cargo-warm` (log `/tmp/cargo-warm.log`).
 
 ## Status
-Proposed (contract amended after Building; candidate `fd142233` exists and awaits plan re-approval then implementation review)
+Ready for review (amended plan approved `D02-PLAN-2`; Builder candidate `fd142233` from `D02-BUILD-1` is the implementation candidate)
 
 ## Next
-Reviewer `D02-PLAN-2` plan-reviews the amended contract (Tests/Constraints/Out lint-baseline change only). On APPROVE_PLAN → status Ready for review → dispatch `D02-IMPL-1` implementation review of candidate `fd142233`. On REJECT → Builder revises contract text (no code changes unless the contract requires).
+Independent implementation review `D02-IMPL-1` in isolated worktree. On APPROVE_IMPLEMENTATION → Shipped, archive `slices/02-deny-wildcard-im-senders.md`, advance to 03. On REJECT → rejection count 1, Builder repairs.
