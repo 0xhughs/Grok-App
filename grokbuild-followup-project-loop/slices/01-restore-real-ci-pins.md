@@ -155,7 +155,7 @@ Review events:
 - E4 / `D01-IMPL-1` / implementation / APPROVE_IMPLEMENTATION / contract `34f89916…6fafa`, candidate `8c79e574…341e` / no gaps / counters frozen: rejections 2, no-progress 0
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
-Advance phase: archive written (slices/01-restore-real-ci-pins.md verified byte-identical via cmp); next selected: 02
+Advance phase: archive pending
 Next slice ID / draft: none
 
 ## Status

@@ -44,17 +44,9 @@ Pending release result: none
 Release review events / last consumed dispatch: none
 
 ## Shipped
-- (none)
+- 01 Restore real CI pins — C1, N7 — code commit `73193a0e`, candidate `8c79e574…341e`, implementation approval `D01-IMPL-1`; archive `slices/01-restore-real-ci-pins.md`. Note: `dtolnay/rust-toolchain` pinned to `refs/heads/stable` tip (no tag exists) — sanctioned exception; checker reports UNKNOWN_SHA when the branch moves (fail-closed).
 
 ## Now
-### 01 Restore real CI pins
-Goal: Every GitHub Action `uses:` pin is a real upstream 40-char SHA. A checker fails fabricated pins.
-Provides: C1, N7
-Depends on: none
-Target membership: inside
-Out: Making CI green end-to-end if gtk/webkit cannot link in this environment; rewriting application features.
-
-## Later
 ### 02 Deny wildcard IM senders on the live bridge
 Goal: Rust `remote_im` treats `*` and empty as deny. Error text does not recommend `*`.
 Provides: R4, N2
@@ -62,6 +54,7 @@ Depends on: 01
 Target membership: inside
 Out: Deleting the legacy Node `remote-bridge/` package.
 
+## Later
 ### 03 Gate dangerous IPC
 Goal: `side_browser_eval` cannot target `main`/`session-*`/`pet`/`theme-editor`. YOLO, CLI path, mirror publish, plugin `--trust`, and serve start require host-side confirm or main-only command permissions.
 Provides: D1, N1, N10
