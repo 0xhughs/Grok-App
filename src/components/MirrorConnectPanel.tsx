@@ -356,8 +356,6 @@ function categoryLabel(
       return labels.writeCategoryAskUser;
     case "plan":
       return labels.writeCategoryPlan;
-    case "delete":
-      return labels.writeCategoryDelete;
     case "rename":
       return labels.writeCategoryRename;
     default:
