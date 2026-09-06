@@ -81,7 +81,7 @@ jobs:
         uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832e0b4 # v4.0.3
+        uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4.0.3
         with:
           node-version: 22
           cache: pnpm
@@ -102,12 +102,12 @@ jobs:
             file
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@4dd2f0b9f5e4277b5a8eb2a6fb368c22119fa9d1 # stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable (refs/heads/stable)
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust cache
-        uses: swatinem/rust-cache@f0deed1e0edfc6a9be954172b8c0ab617c49165c # v2.7.7
+        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
         with:
           workspaces: "./src-tauri -> target"
           shared-key: ${{ matrix.name }}
@@ -283,7 +283,7 @@ jobs:
           fi
 
       - name: Build Tauri app & attach to GitHub Release
-        uses: tauri-apps/tauri-action@b70ec574c8034d6beea488582d1c9ef2cf1c9cb4 # v0.5.17
+        uses: tauri-apps/tauri-action@2a8db2c169af2fdc695133781e27ecba52daea75 # v0.5.17
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GROK_UPDATER_PUBLIC_KEY: ${{ secrets.GROK_UPDATER_PUBLIC_KEY }}
