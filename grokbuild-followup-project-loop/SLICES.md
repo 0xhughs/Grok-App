@@ -18,7 +18,7 @@ The owner running this pack in Google Antigravity against a local clone of https
 Slices 01–09 inclusive. Stop when Now is `None — target complete` and release gates pass. Do not implement Later-outside work. Do not publish or deploy.
 
 ## Run status
-Prepared
+Running
 
 ## Open decisions
 None remaining. Locked from the audit:

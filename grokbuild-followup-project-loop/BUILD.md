@@ -41,19 +41,24 @@ Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
 
 ## Loop state
-Execution mode / tool adapter: Google Antigravity. Coordinator is the primary agent. Builder and Reviewer are independent subagents via `invoke_subagent` (fallback `define_subagent` then invoke). Builder workspace: inherit or share the grokbuild checkout. Reviewer workspace: isolated `branch` worktree or an exact copy of the candidate; Reviewer tools must not include file-write / apply-patch. Record actual tool names and agent IDs only after first authorized dispatch.
-Coordinator: none
-Worker / role / phase: none
-Dispatch ID / launch state / input identity: none
-Pending result / last consumed dispatch: none
+Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06). The pack was written for Antigravity `invoke_subagent`; that tool does not exist in this runtime. The equivalent independent-subagent primitive here is the Cursor `Task` tool (`subagent_type=generalPurpose`), which runs each worker in a fresh, separate context with no access to coordinator or sibling reasoning. Binding:
+- Coordinator = this Cursor Cloud Agent session (sole writer of protocol files under `grokbuild-followup-project-loop/`).
+- Builder = `Task(generalPurpose)` with BUILDER.md role text inlined, workspace **inherit** (`/workspace`, the grokbuild checkout on branch `cursor/grokbuild-followup-loop-c341`).
+- Reviewer = `Task(generalPurpose)` with REVIEWER.md role text inlined, fresh context per review, workspace **branch**: an isolated `git worktree add --detach /tmp/loop-review/<dispatch> <candidate HEAD>` created by coordinator after confirming the checkout is clean (so the worktree is an exact copy of the candidate). Tool-layer write restriction is not available in this adapter; mitigation = isolated worktree (writes there cannot touch the candidate), explicit no-write instruction for `/workspace`, and coordinator recompute of candidate identity after every review.
+- Runtime inventory: Task results are terminal on return; there is no sidebar/interim state. No second coordinator exists.
+Deviation notice: LOOP.md says stop with Human required if `invoke_subagent` is missing. Coordinator judged the intent (independent, non-persona-switched Builder/Reviewer; no faked review) is satisfied by the Task adapter and proceeded; the user may veto this substitution, in which case all approvals recorded under this adapter are void.
+Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only; no code drift).
+Worker / role / phase: Reviewer / plan review / slice 01
+Dispatch ID / launch state / input identity: `D01-PLAN-1` / launching / baseline candidate `4047d511…e5290`, contract `a72182e1…bbcd`
+Pending result / last consumed dispatch: none / none
 Snapshot capture and recheck commands / coverage / exclusions:
-- Capture: `git -C <GROKBUILD_REPO> rev-parse HEAD`; `git -C <GROKBUILD_REPO> status --porcelain=v1`; if porcelain is non-empty, write a SHA-256 manifest of covered relative paths to `<PACK_DIR>/artifacts/snapshot-<dispatch>.manifest` and record `sha256sum` of that file.
-- Recheck: repeat the same commands; compare HEAD and manifest digest.
-- Coverage: `.github/workflows/`, `scripts/`, lockfiles if touched.
-- Exclusions: `target/`, `node_modules/`, `dist/`, pack `artifacts/` manifests.
-Baseline snapshot: none
-Contract identity: none
-Candidate snapshot: none
+- Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
+- Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
+- Coverage: entire tracked tree outside the pack dir (source, tests, `.github/workflows/`, `scripts/`, lockfiles, docs, capabilities, assets).
+- Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/` (protocol + artifacts).
+Baseline snapshot: HEAD `ea4ec712c1c1d5ef27b036b7999a2955dcf4a86c`, clean-tree, CANDIDATE `4047d511c0e72b72f81a552ea71f6f3bae19f7ce6efd7fbac193e2baf18e5290`
+Contract identity: `a72182e10fe7f75e8f7f1e63e7a2bd0a1ec0280d6aff2d69ef12af117946bbcd`
+Candidate snapshot: none (plan phase; equals baseline)
 Rejection count: 0
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none
