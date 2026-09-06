@@ -98,8 +98,8 @@ Target membership: inside
 Out: Verifying live Grok Build `@path` semantics.
 
 ### 09 Docs match the leftover posture
-Goal: remote-security.md, README_EN.md, SECURITY.md state React-vs-host confirm, CLI-install verification, and CI pin-check reality.
+Goal: remote-security.md, README_EN.md, SECURITY.md state React-vs-host confirm, CLI-install verification, and CI pin-check reality. Remote IM user-facing copy and `docs/llm-wiki/remote-im.md` stop offering `*` for allow-from (i18n keys in `settings-remoteIm.ts` across all 15 locales, `en` authority) and the Remote IM panel save-time check refuses `*`-containing values, matching the slice 02 bridge default. (Amended by coordinator after `D02-DRAFT-1`: within authority under AGENTS "Docs must match code defaults after each slice that changes a default" and the locked R4 decision "error text must not recommend `*`".)
 Provides: D7 leftover
-Depends on: 01, 03, 05
+Depends on: 01, 02, 03, 05
 Target membership: inside
 Out: Marketing copy unrelated to these defaults.
