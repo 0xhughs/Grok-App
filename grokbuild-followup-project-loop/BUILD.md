@@ -133,8 +133,8 @@ Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, rec
 - Runtime inventory: Task results are terminal on return; there is no sidebar/interim state. No second coordinator exists.
 Deviation notice: LOOP.md says stop with Human required if `invoke_subagent` is missing. Coordinator judged the intent (independent, non-persona-switched Builder/Reviewer; no faked review) is satisfied by the Task adapter and proceeded; the user may veto this substitution, in which case all approvals recorded under this adapter are void.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only; no code drift).
-Worker / role / phase: none (slice shipped; advance in progress)
-Dispatch ID / launch state / input identity: none
+Worker / role / phase: Builder / draft-proposal for next slice 02 (no code edits) / advance
+Dispatch ID / launch state / input identity: `D02-DRAFT-1` / launching / candidate `8c79e574…341e`, SLICES Now = 02
 Pending result / last consumed dispatch: none / `D01-IMPL-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
