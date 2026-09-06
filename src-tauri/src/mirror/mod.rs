@@ -53,6 +53,12 @@ pub struct MirrorEnvConfig {
     pub dist: Option<PathBuf>,
     /// Concurrent WS client cap (`GROK_MIRROR_MAX_CLIENTS`, default 4).
     pub max_clients: u32,
+    /// Start Cloudflare Quick Tunnel when true (`GROK_MIRROR_PUBLISH_TUNNEL=1`).
+    /// Default false (loopback/LAN only). `GROK_MIRROR_NO_TUNNEL=1` unconditionally disables it.
+    pub publish_tunnel: bool,
+    /// Allow remote write turns to relaxed-policy sessions (`GROK_MIRROR_ALLOW_REMOTE_YOLO=1`).
+    /// Default false (refuse turns to always_approve, dont_ask, auto, accept_edits).
+    pub allow_remote_yolo: bool,
 }
 
 impl MirrorEnvConfig {
@@ -77,6 +83,8 @@ impl MirrorEnvConfig {
             .and_then(|s| s.trim().parse::<u32>().ok())
             .map(normalize_max_clients)
             .unwrap_or(DEFAULT_MAX_CLIENTS);
+        let publish_tunnel = env_truthy("GROK_MIRROR_PUBLISH_TUNNEL") && !no_tunnel;
+        let allow_remote_yolo = env_truthy("GROK_MIRROR_ALLOW_REMOTE_YOLO");
         Self {
             headless,
             token,
@@ -85,6 +93,8 @@ impl MirrorEnvConfig {
             allow_lan,
             dist,
             max_clients,
+            publish_tunnel,
+            allow_remote_yolo,
         }
     }
 }
@@ -137,6 +147,10 @@ pub struct MirrorStatus {
     pub allow_lan: bool,
     /// Copy/QR URL using the detected LAN IPv4. None when LAN is off or no IPv4 found.
     pub lan_url: Option<String>,
+    /// When true, remote turns can be sent to relaxed-policy sessions.
+    pub allow_remote_yolo: bool,
+    /// When true, mirror publishes a public internet tunnel via Cloudflare.
+    pub publish_tunnel: bool,
 }
 
 struct Runtime {
@@ -154,6 +168,8 @@ struct Runtime {
     allow_lan: bool,
     /// Cached default-route IPv4 for copy/QR (None = undetected).
     lan_ip: Option<Ipv4Addr>,
+    publish_tunnel: bool,
+    allow_remote_yolo: bool,
 }
 
 /// Host-side handles for RPC (set in app setup / mirror_start).
@@ -172,6 +188,8 @@ struct Inner {
     max_clients: u32,
     /// LAN bind preference (panel + env). Default false (loopback).
     allow_lan: bool,
+    publish_tunnel: bool,
+    allow_remote_yolo: bool,
 }
 
 /// Process-wide mirror host (memory-only token; not persisted).
@@ -185,6 +203,8 @@ impl MirrorHost {
         let env = MirrorEnvConfig::from_env();
         let max_clients = env.max_clients;
         let allow_lan = env.allow_lan;
+        let publish_tunnel = env.publish_tunnel;
+        let allow_remote_yolo = env.allow_remote_yolo;
         Self {
             inner: Mutex::new(Inner {
                 env,
@@ -194,9 +214,111 @@ impl MirrorHost {
                 read_only: true,
                 max_clients,
                 allow_lan,
+                publish_tunnel,
+                allow_remote_yolo,
             }),
             hub: Arc::new(ws::WsHub::new()),
         }
+    }
+
+    pub fn allow_remote_yolo(&self) -> bool {
+        let g = self.inner.lock();
+        g.runtime
+            .as_ref()
+            .map(|r| r.allow_remote_yolo)
+            .unwrap_or(g.allow_remote_yolo)
+    }
+
+    pub fn set_allow_remote_yolo(&self, allow: bool) {
+        let mut g = self.inner.lock();
+        let prev = g
+            .runtime
+            .as_ref()
+            .map(|r| r.allow_remote_yolo)
+            .unwrap_or(g.allow_remote_yolo);
+        g.allow_remote_yolo = allow;
+        g.env.allow_remote_yolo = allow;
+        if let Some(r) = g.runtime.as_mut() {
+            r.allow_remote_yolo = allow;
+        }
+        if prev != allow {
+            tracing::info!(allow_remote_yolo = allow, "mirror: remote YOLO toggled");
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn publish_tunnel(&self) -> bool {
+        let g = self.inner.lock();
+        g.runtime
+            .as_ref()
+            .map(|r| r.publish_tunnel)
+            .unwrap_or(g.publish_tunnel)
+    }
+
+    pub async fn set_publish_tunnel(self: &Arc<Self>, publish: bool) -> Result<MirrorStatus, String> {
+        let (port, token, need_start_tunnel, need_stop_tunnel) = {
+            let mut g = self.inner.lock();
+            let prev = g.publish_tunnel;
+            let effective = publish && !g.env.no_tunnel;
+            g.publish_tunnel = effective;
+            g.env.publish_tunnel = effective;
+            if let Some(r) = g.runtime.as_mut() {
+                r.publish_tunnel = effective;
+            }
+            if prev != effective {
+                tracing::info!(publish_tunnel = effective, "mirror: publish tunnel toggled");
+            }
+            if let Some(r) = g.runtime.as_mut() {
+                let need_start = effective && r.tunnel.is_none() && r.phase != MirrorPhase::Live && r.phase != MirrorPhase::WaitingTunnel;
+                let need_stop = !effective && r.tunnel.is_some();
+                if need_start {
+                    r.phase = MirrorPhase::WaitingTunnel;
+                }
+                (r.port, r.token.clone(), need_start, need_stop)
+            } else {
+                (0, String::new(), false, false)
+            }
+        };
+
+        if need_stop_tunnel {
+            let tunnel_to_stop = {
+                let mut g = self.inner.lock();
+                if let Some(r) = g.runtime.as_mut() {
+                    r.phase = MirrorPhase::Local;
+                    let local = lan::local_access_url(r.allow_lan, r.port, &r.token, r.lan_ip);
+                    r.public_url = Some(local);
+                    r.tunnel.take()
+                } else {
+                    None
+                }
+            };
+            if let Some(t) = tunnel_to_stop {
+                t.stop();
+            }
+        } else if need_start_tunnel {
+            match tunnel::start_quick_tunnel(port).await {
+                Ok(started) => {
+                    let public = format!("{}/t/{}/", started.public_url.trim_end_matches('/'), token);
+                    let mut g = self.inner.lock();
+                    if let Some(r) = g.runtime.as_mut() {
+                        r.phase = MirrorPhase::Live;
+                        r.public_url = Some(public);
+                        r.tunnel = Some(started.handle);
+                        r.error = None;
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "mirror cloudflared tunnel failed");
+                    let mut g = self.inner.lock();
+                    if let Some(r) = g.runtime.as_mut() {
+                        r.phase = MirrorPhase::Error;
+                        r.error = Some(e);
+                    }
+                }
+            }
+        }
+
+        Ok(self.status())
     }
 
     pub fn hub(&self) -> Arc<ws::WsHub> {
@@ -441,10 +563,12 @@ impl MirrorHost {
         }
 
         // Mark starting so concurrent status is coherent.
-        let allow_lan = {
+        let (allow_lan, publish_tunnel, allow_remote_yolo) = {
             let mut g = self.inner.lock();
             let read_only = g.read_only;
             let allow_lan = g.allow_lan;
+            let publish_tunnel = g.publish_tunnel;
+            let allow_remote_yolo = g.allow_remote_yolo;
             g.runtime = Some(Runtime {
                 token: token.clone(),
                 port: prefer_port,
@@ -457,8 +581,10 @@ impl MirrorHost {
                 read_only,
                 allow_lan,
                 lan_ip: None,
+                publish_tunnel,
+                allow_remote_yolo,
             });
-            allow_lan
+            (allow_lan, publish_tunnel, allow_remote_yolo)
         };
 
         let (bound_port, shutdown_tx) = match http::start_server(
@@ -484,27 +610,33 @@ impl MirrorHost {
         };
         let local_url = lan::local_access_url(allow_lan, bound_port, &token, lan_ip);
 
+        let should_tunnel = publish_tunnel && !env.no_tunnel;
+
         {
             let mut g = self.inner.lock();
             if let Some(r) = g.runtime.as_mut() {
                 r.port = bound_port;
-                r.phase = if env.no_tunnel {
-                    MirrorPhase::Local
-                } else {
+                r.phase = if should_tunnel {
                     MirrorPhase::WaitingTunnel
+                } else {
+                    MirrorPhase::Local
                 };
                 r.public_url = Some(local_url.clone());
                 r.shutdown_tx = Some(shutdown_tx);
                 r.token = token.clone();
                 r.allow_lan = allow_lan;
                 r.lan_ip = lan_ip;
+                r.publish_tunnel = publish_tunnel;
+                r.allow_remote_yolo = allow_remote_yolo;
             }
         }
 
-        let (phase, public_url, tunnel_handle, error) = if env.no_tunnel {
+        let (phase, public_url, tunnel_handle, error) = if !should_tunnel {
             tracing::info!(
                 port = bound_port,
-                "mirror host local-only (GROK_MIRROR_NO_TUNNEL)"
+                publish_tunnel,
+                no_tunnel = env.no_tunnel,
+                "mirror host local-only"
             );
             (MirrorPhase::Local, local_url.clone(), None, None)
         } else {
@@ -539,7 +671,9 @@ impl MirrorHost {
             token_tail = %tail,
             phase = ?phase,
             no_tunnel = env.no_tunnel,
+            publish_tunnel,
             allow_lan,
+            allow_remote_yolo,
             max_clients = self.max_clients(),
             "mirror host started"
         );
@@ -598,6 +732,8 @@ impl MirrorHost {
                 read_only: g.read_only,
                 allow_lan: g.allow_lan,
                 lan_url: None,
+                allow_remote_yolo: g.allow_remote_yolo,
+                publish_tunnel: g.publish_tunnel,
             },
             Some(r) => {
                 let tail = auth::token_tail(&r.token, 6);
@@ -619,6 +755,8 @@ impl MirrorHost {
                     read_only: r.read_only,
                     allow_lan: r.allow_lan,
                     lan_url,
+                    allow_remote_yolo: r.allow_remote_yolo,
+                    publish_tunnel: r.publish_tunnel,
                 }
             }
         }
@@ -710,8 +848,16 @@ pub async fn mirror_start(
     app: AppHandle,
     host: State<'_, Arc<MirrorHost>>,
     mgr: State<'_, Arc<SessionManager>>,
+    publish_tunnel: Option<bool>,
+    allow_remote_yolo: Option<bool>,
 ) -> Result<MirrorStatus, String> {
     host.attach(app, mgr.inner().clone());
+    if let Some(p) = publish_tunnel {
+        let _ = host.set_publish_tunnel(p).await;
+    }
+    if let Some(y) = allow_remote_yolo {
+        host.set_allow_remote_yolo(y);
+    }
     host.start().await
 }
 
@@ -793,12 +939,16 @@ mod tests {
                     allow_lan: false,
                     dist: Some(resolve_dist_dir(None)),
                     max_clients: DEFAULT_MAX_CLIENTS,
+                    publish_tunnel: false,
+                    allow_remote_yolo: false,
                 },
                 runtime: None,
                 ctx: None,
                 read_only: true,
                 max_clients: DEFAULT_MAX_CLIENTS,
                 allow_lan: false,
+                publish_tunnel: false,
+                allow_remote_yolo: false,
             }),
             hub: Arc::new(ws::WsHub::new()),
         });
@@ -832,9 +982,19 @@ mod tests {
             .await
             .expect("index");
         assert_eq!(index.status().as_u16(), 200);
+        let csp = index
+            .headers()
+            .get(reqwest::header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(csp.contains("default-src 'self'"), "CSP header missing on index response");
         let body = index.text().await.unwrap_or_default();
         assert!(
-            body.contains("__MIRROR__") || body.contains("root"),
+            !body.contains("__MIRROR__"),
+            "token should not be injected inline into HTML"
+        );
+        assert!(
+            body.contains("root") || body.contains("dist not found"),
             "expected SPA/placeholder body, got len {}",
             body.len()
         );
@@ -875,12 +1035,16 @@ mod tests {
                     allow_lan: false,
                     dist: Some(missing.clone()),
                     max_clients: DEFAULT_MAX_CLIENTS,
+                    publish_tunnel: false,
+                    allow_remote_yolo: false,
                 },
                 runtime: None,
                 ctx: None,
                 read_only: true,
                 max_clients: DEFAULT_MAX_CLIENTS,
                 allow_lan: false,
+                publish_tunnel: false,
+                allow_remote_yolo: false,
             }),
             hub: Arc::new(ws::WsHub::new()),
         });
@@ -904,15 +1068,100 @@ mod tests {
             cc, "no-cache, no-store, must-revalidate",
             "placeholder must not be cacheable"
         );
+        let csp = res
+            .headers()
+            .get(reqwest::header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(csp.contains("default-src 'self'"), "CSP header missing on placeholder");
         let body = res.text().await.unwrap_or_default();
         assert!(
-            body.contains("dist not found") || body.contains("__MIRROR__"),
+            !body.contains("__MIRROR__"),
+            "token should not be injected inline into placeholder"
+        );
+        assert!(
+            body.contains("dist not found") || body.contains("root"),
             "expected placeholder body, got len {}",
             body.len()
         );
 
         host.stop().await.expect("stop");
         let _ = std::fs::remove_dir_all(&missing);
+    }
+
+    #[tokio::test]
+    async fn start_defaults_to_local_without_tunnel() {
+        let host = Arc::new(MirrorHost {
+            inner: Mutex::new(Inner {
+                env: MirrorEnvConfig {
+                    headless: false,
+                    token: Some("test-token-local-default-1234567890abcdef".into()),
+                    port: Some(0),
+                    no_tunnel: false,
+                    allow_lan: false,
+                    dist: Some(resolve_dist_dir(None)),
+                    max_clients: DEFAULT_MAX_CLIENTS,
+                    publish_tunnel: false,
+                    allow_remote_yolo: false,
+                },
+                runtime: None,
+                ctx: None,
+                read_only: true,
+                max_clients: DEFAULT_MAX_CLIENTS,
+                allow_lan: false,
+                publish_tunnel: false,
+                allow_remote_yolo: false,
+            }),
+            hub: Arc::new(ws::WsHub::new()),
+        });
+
+        let st = host.start().await.expect("start");
+        assert!(st.running);
+        assert_eq!(st.phase, MirrorPhase::Local);
+        assert!(!st.publish_tunnel);
+        assert!(!st.allow_remote_yolo);
+        let url = st.public_url.expect("public_url");
+        assert!(url.contains("127.0.0.1"), "default public url should be loopback: {url}");
+
+        host.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn start_with_publish_tunnel_starts_tunnel() {
+        let host = Arc::new(MirrorHost {
+            inner: Mutex::new(Inner {
+                env: MirrorEnvConfig {
+                    headless: false,
+                    token: Some("test-token-tunnel-publish-1234567890abcdef".into()),
+                    port: Some(0),
+                    no_tunnel: false,
+                    allow_lan: false,
+                    dist: Some(resolve_dist_dir(None)),
+                    max_clients: DEFAULT_MAX_CLIENTS,
+                    publish_tunnel: true,
+                    allow_remote_yolo: false,
+                },
+                runtime: None,
+                ctx: None,
+                read_only: true,
+                max_clients: DEFAULT_MAX_CLIENTS,
+                allow_lan: false,
+                publish_tunnel: true,
+                allow_remote_yolo: false,
+            }),
+            hub: Arc::new(ws::WsHub::new()),
+        });
+
+        let st = host.start().await.expect("start");
+        assert!(st.running);
+        assert!(st.publish_tunnel);
+        assert_ne!(
+            st.phase,
+            MirrorPhase::Local,
+            "publish_tunnel=true must activate tunnel flow (Live/WaitingTunnel/Error), not remain Local"
+        );
+
+        host.stop().await.expect("stop");
     }
 }
 
@@ -925,6 +1174,23 @@ pub async fn mirror_set_allow_lan(
     allow_lan: bool,
 ) -> Result<MirrorStatus, String> {
     host.set_allow_lan(allow_lan).await
+}
+
+#[tauri::command]
+pub async fn mirror_set_publish_tunnel(
+    host: State<'_, Arc<MirrorHost>>,
+    publish_tunnel: bool,
+) -> Result<MirrorStatus, String> {
+    host.set_publish_tunnel(publish_tunnel).await
+}
+
+#[tauri::command]
+pub async fn mirror_set_allow_remote_yolo(
+    host: State<'_, Arc<MirrorHost>>,
+    allow_remote_yolo: bool,
+) -> Result<MirrorStatus, String> {
+    host.set_allow_remote_yolo(allow_remote_yolo);
+    Ok(host.status())
 }
 
 #[tauri::command]

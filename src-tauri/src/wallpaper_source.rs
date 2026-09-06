@@ -580,6 +580,33 @@ fn extract_json_object(raw: &str) -> Option<serde_json::Value> {
     parse_grok_wallpaper_payload(raw)
 }
 
+pub(crate) fn build_wallpaper_headless_args(
+    prompt: &str,
+    schema: &str,
+    max_turns: u32,
+    is_yolo: bool,
+) -> Vec<String> {
+    let mut args = vec![
+        "-p".into(),
+        prompt.to_string(),
+        "--no-subagents".into(),
+        "--disallowed-tools".into(),
+        "run_terminal_cmd,run_terminal_command,search_replace,write,Agent,spawn_subagent,bash,bash_tool".into(),
+        "--max-turns".into(),
+        max_turns.to_string(),
+        "--effort".into(),
+        "low".into(),
+        "--json-schema".into(),
+        schema.to_string(),
+        "--output-format".into(),
+        "json".into(),
+    ];
+    if is_yolo {
+        args.push("--always-approve".into());
+    }
+    args
+}
+
 pub(crate) fn run_grok_headless(
     cli_path: &str,
     prompt: &str,
@@ -588,21 +615,21 @@ pub(crate) fn run_grok_headless(
     timeout: Duration,
     cwd: Option<&Path>,
 ) -> Result<String, String> {
+    let settings = crate::store::load_settings();
+    let is_yolo = matches!(
+        crate::permission::effective_permission_policy(
+            &settings.permission_policy,
+            None,
+            None,
+            None,
+        ),
+        crate::permission::PermissionPolicy::AlwaysApprove
+    );
+
     let mut cmd = Command::new(cli_path);
-    cmd.arg("-p")
-        .arg(prompt)
-        .arg("--always-approve")
-        .arg("--max-turns")
-        .arg(max_turns.to_string())
-        .arg("--effort")
-        .arg("low")
-        .arg("--json-schema")
-        .arg(schema)
-        .arg("--output-format")
-        .arg("json");
+    cmd.args(build_wallpaper_headless_args(prompt, schema, max_turns, is_yolo));
     // Headless background-wait policy (CLI 0.2.117+); soft-fail older builds.
     {
-        let settings = crate::store::load_settings();
         let ver = crate::cli_probe::read_version_of(std::path::Path::new(cli_path));
         for a in
             crate::acp_client::background_wait_spawn_flags_from_settings(&settings, ver.as_deref())
@@ -612,6 +639,8 @@ pub(crate) fn run_grok_headless(
     }
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
+    } else {
+        cmd.current_dir(std::env::temp_dir());
     }
     process_util::apply_no_window_std(&mut cmd);
     if let Some(path_env) = process_util::enriched_path_env() {
@@ -1734,5 +1763,23 @@ and https://pbs.twimg.com/media/HNccFG2X0AE8gQ6.jpg?format=jpg&name=small
             Some("https://x.com/alice/status/1234567890123456789")
         );
         assert!(items[1].post_url.is_none());
+    }
+
+    #[test]
+    fn wallpaper_headless_args_restricted_and_conditional_always_approve() {
+        let ask_args = build_wallpaper_headless_args("wallpaper prompt", "{}", 2, false);
+        assert!(ask_args.contains(&"--no-subagents".into()));
+        assert!(ask_args.contains(&"--disallowed-tools".into()));
+        assert!(!ask_args.contains(&"--always-approve".into()));
+        let dt_idx = ask_args.iter().position(|x| x == "--disallowed-tools").unwrap();
+        let dt_val = &ask_args[dt_idx + 1];
+        assert!(dt_val.contains("run_terminal_cmd"));
+        assert!(dt_val.contains("write"));
+        assert!(dt_val.contains("Agent"));
+
+        let yolo_args = build_wallpaper_headless_args("wallpaper prompt", "{}", 2, true);
+        assert!(yolo_args.contains(&"--no-subagents".into()));
+        assert!(yolo_args.contains(&"--disallowed-tools".into()));
+        assert!(yolo_args.contains(&"--always-approve".into()));
     }
 }

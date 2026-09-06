@@ -28,7 +28,8 @@ const DOCKER_DAEMON_TIMEOUT: Duration = Duration::from_secs(8);
 /// are enough to prove the default transport is not becoming usable, while
 /// keeping the HTTP/2 retry well below the normal Docker readiness timeout.
 const QUIC_FAILURES_BEFORE_HTTP2_RETRY: usize = 2;
-const DEFAULT_CLOUDFLARED_IMAGE: &str = "cloudflare/cloudflared:latest";
+const DEFAULT_CLOUDFLARED_IMAGE: &str =
+    "cloudflare/cloudflared@sha256:6efbe6aa99b4d8c1ea9825b74052f5209772ee6f83030ee9493f0b2f15ebca79";
 const DOCKER_CONTAINER_PREFIX: &str = "grok-mirror-cloudflared-";
 const DOCKER_MIRROR_LABEL: &str = "com.grokapp.mirror=1";
 
@@ -856,5 +857,15 @@ mod tests {
             .unwrap_err();
         assert!(error.retry_with_http2);
         assert!(error.message.contains("QUIC"));
+    }
+
+    #[test]
+    fn docker_adapter_uses_digest_pinned_image() {
+        assert!(DEFAULT_CLOUDFLARED_IMAGE.contains("@sha256:"));
+        let parts: Vec<&str> = DEFAULT_CLOUDFLARED_IMAGE.split("@sha256:").collect();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], "cloudflare/cloudflared");
+        assert_eq!(parts[1].len(), 64);
+        assert!(parts[1].chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

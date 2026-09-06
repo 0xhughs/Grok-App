@@ -35,7 +35,6 @@ import {
   mirrorDiagnosticDisplay,
   mirrorHostPhaseClass,
   mirrorHostPhaseLabelField,
-  shouldShowMirrorQr,
   type MirrorErrorKind,
   type MirrorHostConnectStatus,
 } from "@/lib/mirrorStatus";
@@ -94,6 +93,20 @@ export type MirrorConnectLabels = {
   allowLanConfirmTitle: string;
   allowLanConfirmMessage: string;
   allowLanConfirmOk: string;
+  publishTunnel?: string;
+  publishTunnelOn?: string;
+  publishTunnelHint?: string;
+  publishTunnelConfirmTitle?: string;
+  publishTunnelConfirmMessage?: string;
+  publishTunnelConfirmOk?: string;
+  allowRemoteYolo?: string;
+  allowRemoteYoloOn?: string;
+  allowRemoteYoloHint?: string;
+  allowRemoteYoloConfirmTitle?: string;
+  allowRemoteYoloConfirmMessage?: string;
+  allowRemoteYoloConfirmOk?: string;
+  remoteYoloBlocked?: string;
+  remoteYoloAllowed?: string;
   lanHint: string;
   lanHintOn: string;
   lanIpUnknown: string;
@@ -241,6 +254,8 @@ function emptyStatus(): MirrorStatus {
     readOnly: true,
     allowLan: false,
     lanUrl: null,
+    allowRemoteYolo: false,
+    publishTunnel: false,
   };
 }
 
@@ -630,6 +645,8 @@ function MirrorConnectBody({
   onRotate,
   onToggleReadOnly,
   onToggleAllowLan,
+  onTogglePublishTunnel,
+  onToggleAllowRemoteYolo,
   onRequestConfirm,
 }: {
   labels: MirrorConnectLabels;
@@ -648,12 +665,39 @@ function MirrorConnectBody({
   onRotate: () => void;
   onToggleReadOnly: () => void;
   onToggleAllowLan: () => void;
+  onTogglePublishTunnel: () => void;
+  onToggleAllowRemoteYolo: () => void;
   onRequestConfirm: (opts: MirrorConfirmRequest) => void;
 }) {
   const phaseMod = mirrorHostPhaseClass(connect.tone);
   const copyUrl = mirrorCopyUrl(status);
   const lanOn = !!status.allowLan;
-  const showQr = shouldShowMirrorQr(status, connect);
+  const tunnelOn = !!status.publishTunnel;
+  const yoloOn = !!status.allowRemoteYolo;
+  const showQr =
+    status.running &&
+    !!copyUrl &&
+    connect.phase !== "stopped" &&
+    connect.phase !== "starting" &&
+    connect.phase !== "waiting_tunnel";
+  const publishTunnelLabel =
+    labels.publishTunnel ?? "Publish to internet (Cloudflare)";
+  const publishTunnelOnLabel =
+    labels.publishTunnelOn ?? "Published to internet (Cloudflare)";
+  const publishTunnelHint =
+    labels.publishTunnelHint ??
+    "Publish to the public internet via Cloudflare tunnel (defaults to local/LAN only).";
+  const allowRemoteYoloLabel =
+    labels.allowRemoteYolo ?? "Allow remote YOLO";
+  const allowRemoteYoloOnLabel =
+    labels.allowRemoteYoloOn ?? "Remote YOLO: Allowed";
+  const allowRemoteYoloHint =
+    labels.allowRemoteYoloHint ??
+    "Allow remotely-originated turns to run in relaxed-policy (YOLO) sessions. Default is blocked.";
+  const remoteYoloBlockedLabel =
+    labels.remoteYoloBlocked ?? "Remote YOLO: Blocked";
+  const remoteYoloAllowedLabel =
+    labels.remoteYoloAllowed ?? "Remote YOLO: Allowed";
   const showLiveLanRow =
     lanOn &&
     !!status.lanUrl &&
@@ -697,6 +741,17 @@ function MirrorConnectBody({
             · {labels.clients.replace("{n}", String(status.clients))}
           </span>
         ) : null}
+        <span
+          className={
+            "mirror-connect__err-chip " +
+            (yoloOn
+              ? "mirror-connect__err-chip--warn"
+              : "mirror-connect__err-chip--ok")
+          }
+          title={allowRemoteYoloHint}
+        >
+          {yoloOn ? remoteYoloAllowedLabel : remoteYoloBlockedLabel}
+        </span>
         {showClientsFullChip ? (
           <span
             className="mirror-connect__err-chip mirror-connect__err-chip--warn"
@@ -921,6 +976,32 @@ function MirrorConnectBody({
         >
           {lanOn ? labels.allowLanOn : labels.allowLan}
         </button>
+        <button
+          type="button"
+          className={
+            "btn btn--ghost" +
+            (tunnelOn ? " mirror-connect__write-toggle--on" : "")
+          }
+          disabled={busy}
+          onClick={onTogglePublishTunnel}
+          aria-pressed={tunnelOn}
+          title={publishTunnelHint}
+        >
+          {tunnelOn ? publishTunnelOnLabel : publishTunnelLabel}
+        </button>
+        <button
+          type="button"
+          className={
+            "btn btn--ghost" +
+            (yoloOn ? " mirror-connect__write-toggle--on" : "")
+          }
+          disabled={busy}
+          onClick={onToggleAllowRemoteYolo}
+          aria-pressed={yoloOn}
+          title={allowRemoteYoloHint}
+        >
+          {yoloOn ? allowRemoteYoloOnLabel : allowRemoteYoloLabel}
+        </button>
       </div>
       {status.running && status.readOnly ? (
         <p className="mirror-connect__hint">{labels.readOnlyHint}</p>
@@ -1035,10 +1116,10 @@ export function MirrorConnectPanel({
     };
   }, [active, autoStart, refresh, applyStatus]);
 
-  // QR encodes the phone-facing URL — never a loopback address.
+  // QR encodes the phone-facing URL — local loopback, LAN, or public tunnel.
   const copyUrl = mirrorCopyUrl(status);
   useEffect(() => {
-    if (!copyUrl || isLoopbackMirrorUrl(copyUrl)) {
+    if (!copyUrl || !status.running) {
       setQrDataUrl(null);
       return;
     }
@@ -1058,7 +1139,7 @@ export function MirrorConnectPanel({
     return () => {
       cancelled = true;
     };
-  }, [copyUrl]);
+  }, [copyUrl, status.running]);
 
   const doRotate = () => {
     void (async () => {
@@ -1162,6 +1243,69 @@ export function MirrorConnectPanel({
     applyAllowLan(false);
   };
 
+  const applyPublishTunnel = (publishTunnel: boolean) => {
+    void (async () => {
+      setBusy(true);
+      try {
+        const st = await api.mirrorSetPublishTunnel(publishTunnel);
+        applyStatus(st, { syncMaxClients: true });
+      } catch (e) {
+        setErr(String(e));
+      } finally {
+        setBusy(false);
+      }
+    })();
+  };
+
+  const handleTogglePublishTunnel = () => {
+    if (!status.publishTunnel) {
+      onRequestConfirm({
+        title:
+          labels.publishTunnelConfirmTitle ??
+          "Publish to internet (Cloudflare)?",
+        message:
+          labels.publishTunnelConfirmMessage ??
+          "This will expose the mirror host over a public Cloudflare tunnel to the internet. Anyone with the URL can access your session. Are you sure you want to publish?",
+        confirmLabel:
+          labels.publishTunnelConfirmOk ?? "Publish to internet",
+        onConfirm: () => applyPublishTunnel(true),
+      });
+      return;
+    }
+    applyPublishTunnel(false);
+  };
+
+  const applyAllowRemoteYolo = (allowRemoteYolo: boolean) => {
+    void (async () => {
+      setBusy(true);
+      try {
+        const st = await api.mirrorSetAllowRemoteYolo(allowRemoteYolo);
+        applyStatus(st, { syncMaxClients: true });
+      } catch (e) {
+        setErr(String(e));
+      } finally {
+        setBusy(false);
+      }
+    })();
+  };
+
+  const handleToggleAllowRemoteYolo = () => {
+    if (!status.allowRemoteYolo) {
+      onRequestConfirm({
+        title:
+          labels.allowRemoteYoloConfirmTitle ?? "Allow remote YOLO?",
+        message:
+          labels.allowRemoteYoloConfirmMessage ??
+          "When enabled, remote turns sent to relaxed-policy sessions (always_approve, dont_ask, auto, accept_edits) will be executed without prompts. When disabled (default), remote turns to relaxed sessions are blocked.",
+        confirmLabel:
+          labels.allowRemoteYoloConfirmOk ?? "Allow remote YOLO",
+        onConfirm: () => applyAllowRemoteYolo(true),
+      });
+      return;
+    }
+    applyAllowRemoteYolo(false);
+  };
+
   const handleCopy = async () => {
     const url = mirrorCopyUrl(status);
     if (!url) return;
@@ -1241,6 +1385,8 @@ export function MirrorConnectPanel({
       onRotate={handleRotate}
       onToggleReadOnly={handleToggleReadOnly}
       onToggleAllowLan={handleToggleAllowLan}
+      onTogglePublishTunnel={handleTogglePublishTunnel}
+      onToggleAllowRemoteYolo={handleToggleAllowRemoteYolo}
       onRequestConfirm={onRequestConfirm}
     />
   );

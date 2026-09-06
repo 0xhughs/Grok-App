@@ -820,7 +820,7 @@ impl SessionManager {
         rpc_id: u64,
         decision: String,
         option_id: Option<String>,
-        scope: Option<String>,
+        _scope: Option<String>,
         session_id: Option<String>,
         // UI options snapshot when Host pending list is empty (#542).
         client_options: Option<serde_json::Value>,
@@ -829,12 +829,9 @@ impl SessionManager {
     ) -> Result<SessionSnapshot, String> {
         let target = self.resolve_target_session(session_id)?;
         // Collect ACP + option material only — do **not** mutate FSM / allow_cache
-        // until respond_permission succeeds (failed RPC must leave gate intact).
-        let scope_to_cache = if decision == "allow_session" || decision == "allow_for_session" {
-            scope.filter(|s| !s.trim().is_empty())
-        } else {
-            None
-        };
+        // P4: Client-supplied scope is ignored; host recomputes from pending request.
+        // P3: Chained commands are never cached.
+        let scope_to_cache = self.compute_resolved_scope(&target, &decision);
         let (acp, project_path, pending_options, tool_name, pending_rpc) = self
             .with_session_mut(&target, |s| {
                 Self::touch_activity_locked(s);
@@ -998,6 +995,26 @@ impl SessionManager {
             } else {
                 None
             }
+        })
+        .flatten()
+    }
+
+    /// Recompute the allow-for-session scope key from the pending request.
+    /// P4: Client-supplied scope is ignored; host recomputes from pending request.
+    /// P3: Chained commands are never cached.
+    pub fn compute_resolved_scope(&self, session_id: &str, decision: &str) -> Option<String> {
+        if decision != "allow_session" && decision != "allow_for_session" {
+            return None;
+        }
+        self.with_session_mut(session_id, |s| {
+            s.pending_permission_ui.as_ref().and_then(|ui| {
+                let sk = ui.scope_key.trim();
+                if sk.is_empty() || crate::permission::is_chained_command(sk) {
+                    None
+                } else {
+                    Some(sk.to_string())
+                }
+            })
         })
         .flatten()
     }
@@ -1315,5 +1332,117 @@ mod recycle_tests {
             map.get("keep").map(String::as_str),
             Some("permission_policy")
         );
+    }
+
+    fn test_live_session(id: &str) -> LiveSession {
+        let now = Instant::now();
+        LiveSession {
+            app_session_id: id.into(),
+            process_id: "proc-1".into(),
+            meta: store::SessionMeta {
+                id: id.into(),
+                project_id: None,
+                title: "Test".into(),
+                agent_session_id: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                model_id: None,
+                archived: false,
+                pinned: false,
+                effort: None,
+                mode: None,
+                permission_policy: None,
+                json_schema: None,
+                scheduled: false,
+                worktree_path: None,
+                worktree_branch: None,
+                is_worktree_session: false,
+                plugin_dirs: Vec::new(),
+                extra_rules: None,
+                max_agent_turns: None,
+                system_prompt_override: None,
+                fork_agent_session: false,
+                fork_rewind_prompt_index: None,
+                no_ask_user: None,
+            },
+            fsm: crate::session_fsm::SessionFsm::new(),
+            backend: "mock".into(),
+            acp: None,
+            mock_stream: None,
+            streaming_message_id: None,
+            active_turn_id: None,
+            stream_message_id_locked: false,
+            stream_buf: String::new(),
+            stream_thought: String::new(),
+            stream_last_was_assistant: false,
+            stream_attachments: Vec::new(),
+            model_id: None,
+            effort: None,
+            product_mode: None,
+            project_path: None,
+            allow_cache: crate::permission::SessionAllowCache::default(),
+            policy: crate::permission::PermissionPolicy::default(),
+            provider_retry_attempt: 0,
+            provider_retry_aborted: false,
+            needs_history_bootstrap: false,
+            pending_plan_rpc_id: None,
+            pending_permission_rpc_id: None,
+            pending_permission_options: None,
+            pending_permission_tool_name: None,
+            pending_permission_ui: None,
+            pending_ask_user_rpc_id: None,
+            pending_ask_user_ui: None,
+            last_activity: now,
+            last_stream_progress: now,
+            last_stall_emit: None,
+            stall_soft_emits: 0,
+            journal_throttle: crate::journal_throttle::JournalWriteThrottle::with_default_interval(),
+            open_tool_ids: std::collections::HashSet::new(),
+            open_tool_seen_at: std::collections::HashMap::new(),
+            terminal_tool_ids: std::collections::HashSet::new(),
+            deferred_prompt_complete: None,
+            tools_this_turn: 0,
+            saw_model_output: false,
+            prompt_in_flight: false,
+            sent_prompt_this_visit: false,
+            pending_stream_emit: None,
+            stream_emit_flush_gen: 0,
+            last_tool_heartbeat_emit: None,
+        }
+    }
+
+    #[test]
+    fn compute_resolved_scope_ignores_client_and_disallows_chained() {
+        let mgr = SessionManager::new();
+        let mut s = test_live_session("s1");
+        s.pending_permission_ui = Some(UiPermissionRequest {
+            rpc_id: 1,
+            session_id: "s1".into(),
+            tool_call_id: "tc-1".into(),
+            tool_name: "run_terminal_command".into(),
+            title: "Run command".into(),
+            preview: "{}".into(),
+            scope_key: "run_terminal_command:git status".into(),
+            options: serde_json::json!([]),
+        });
+        *mgr.inner.lock() = Some(s);
+
+        // Host recomputes from pending request
+        let resolved = mgr.compute_resolved_scope("s1", "allow_session");
+        assert_eq!(
+            resolved.as_deref(),
+            Some("run_terminal_command:git status")
+        );
+
+        // Decision not allow_session -> None
+        assert_eq!(mgr.compute_resolved_scope("s1", "allow_once"), None);
+
+        // Chained command in pending request -> never cached (None)
+        mgr.with_session_mut("s1", |s| {
+            if let Some(ref mut ui) = s.pending_permission_ui {
+                ui.scope_key = "run_terminal_command:git status && git push".into();
+            }
+        });
+        assert_eq!(mgr.compute_resolved_scope("s1", "allow_session"), None);
     }
 }

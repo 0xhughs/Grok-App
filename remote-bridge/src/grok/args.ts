@@ -18,9 +18,8 @@ export interface BuildGrokArgsOptions {
 
 const DEFAULT_TEMPLATE = [
   "--no-auto-update",
-  "--always-approve",
   "--permission-mode",
-  "bypassPermissions",
+  "default",
   "--max-turns",
   "12",
   "--cwd",

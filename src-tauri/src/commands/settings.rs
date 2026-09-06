@@ -17,6 +17,24 @@ pub async fn settings_set(
 ) -> Result<AppSettings, String> {
     let prev = store::load_settings();
     let mut settings = settings;
+    // Validate manual_cli_path (D1): reject non-existent, non-file, or non-executable paths.
+    validate_manual_cli_path(settings.manual_cli_path.as_deref())?;
+    if let Some(ref path) = settings.manual_cli_path {
+        if path.trim().is_empty() {
+            settings.manual_cli_path = None;
+        }
+    }
+    // Validate and gate acp_server_addr setting (R6): reject 0.0.0.0, require explicit confirmation for non-loopback.
+    validate_acp_server_addr_setting(
+        settings.acp_server_addr.as_deref(),
+        prev.acp_server_addr.as_deref(),
+        settings.confirm_remote_acp_server,
+    )?;
+    if let Some(ref addr) = settings.acp_server_addr {
+        if addr.trim().is_empty() {
+            settings.acp_server_addr = None;
+        }
+    }
     // Normalize denylist / allowlist so spawn / equality see stable lists.
     settings.disallowed_tools =
         crate::acp_client::normalize_disallowed_tools(&settings.disallowed_tools);
@@ -129,6 +147,8 @@ pub async fn settings_set(
             .filter(|s| !s.is_empty());
         a != b
     };
+    let manual_cli_flip = prev.manual_cli_path.as_deref().map(str::trim)
+        != settings.manual_cli_path.as_deref().map(str::trim);
     let launch_at_login_flip = prev.launch_at_login != settings.launch_at_login;
     let schedules_launch_agent_flip =
         prev.schedules_launch_agent != settings.schedules_launch_agent;
@@ -282,6 +302,7 @@ pub async fn settings_set(
         || compaction_flip
         || acp_addr_flip
         || proxy_flip
+        || manual_cli_flip
     {
         need_soft_respawn = true;
     }
@@ -731,3 +752,249 @@ pub async fn provider_ping() -> Result<serde_json::Value, String> {
         }))
     }
 }
+
+pub fn validate_acp_server_addr_setting(
+    next_addr: Option<&str>,
+    prev_addr: Option<&str>,
+    confirmed: Option<bool>,
+) -> Result<(), String> {
+    if let Some(addr) = next_addr {
+        let trimmed = addr.trim();
+        if !trimmed.is_empty() {
+            let parsed = crate::acp_client::parse_acp_server_addr(trimmed)?;
+            let is_loopback = crate::acp_client::is_loopback_acp_host(&parsed.host);
+            if !is_loopback {
+                let previously_set = prev_addr.map(str::trim) == Some(trimmed);
+                let is_confirmed = confirmed == Some(true) || previously_set;
+                if !is_confirmed {
+                    return Err(
+                        "setting a non-loopback acp_server_addr requires explicit confirmation"
+                            .into(),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate manual_cli_path setting: if provided and non-empty, it must be an existing executable regular file.
+pub fn validate_manual_cli_path(manual_cli_path: Option<&str>) -> Result<(), String> {
+    if let Some(path) = manual_cli_path {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            let p = std::path::Path::new(trimmed);
+            if !p.exists() {
+                return Err(format!("manual_cli_path does not exist: {trimmed}"));
+            }
+            if !p.is_file() {
+                return Err(format!("manual_cli_path is not a regular file: {trimmed}"));
+            }
+            if !crate::process_util::looks_runnable(p) {
+                return Err(format!("manual_cli_path is not executable: {trimmed}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn validate_acp_server_addr_gate_tests() {
+        // Loopback addresses pass without gate / confirmation
+        assert!(validate_acp_server_addr_setting(Some("127.0.0.1:8799"), None, None).is_ok());
+        assert!(validate_acp_server_addr_setting(Some("localhost:8799"), None, None).is_ok());
+        assert!(validate_acp_server_addr_setting(Some("[::1]:8799"), None, None).is_ok());
+        assert!(validate_acp_server_addr_setting(None, None, None).is_ok());
+        assert!(validate_acp_server_addr_setting(Some(""), None, None).is_ok());
+
+        // 0.0.0.0 is explicitly rejected even with confirmation
+        assert!(validate_acp_server_addr_setting(Some("0.0.0.0:8799"), None, None).is_err());
+        assert!(validate_acp_server_addr_setting(Some("0.0.0.0:8799"), None, Some(true)).is_err());
+
+        // Non-loopback requires explicit confirmation
+        let err_no_conf = validate_acp_server_addr_setting(Some("192.168.1.100:8799"), None, None);
+        assert!(err_no_conf.is_err());
+        assert!(err_no_conf.unwrap_err().contains("explicit confirmation"));
+
+        let err_false_conf = validate_acp_server_addr_setting(Some("192.168.1.100:8799"), None, Some(false));
+        assert!(err_false_conf.is_err());
+
+        // Non-loopback with explicit confirmation passes
+        assert!(validate_acp_server_addr_setting(Some("192.168.1.100:8799"), None, Some(true)).is_ok());
+
+        // Already configured address in prev does not re-require confirmation
+        assert!(validate_acp_server_addr_setting(
+            Some("192.168.1.100:8799"),
+            Some("192.168.1.100:8799"),
+            None,
+        ).is_ok());
+    }
+
+    #[test]
+    fn settings_set_validates_manual_cli_path() {
+        // 1. None or empty / whitespace passes
+        assert!(validate_manual_cli_path(None).is_ok());
+        assert!(validate_manual_cli_path(Some("")).is_ok());
+        assert!(validate_manual_cli_path(Some("   ")).is_ok());
+
+        // 2. Non-existent path rejected
+        let non_existent = "/nonexistent/path/to/binary-123456";
+        let err = validate_manual_cli_path(Some(non_existent)).unwrap_err();
+        assert!(err.contains("does not exist"));
+
+        // 3. Directory rejected
+        let tmp_dir = std::env::temp_dir();
+        let err_dir = validate_manual_cli_path(Some(tmp_dir.to_str().unwrap())).unwrap_err();
+        assert!(err_dir.contains("not a regular file"));
+
+        // 4. Non-executable file rejected (on unix)
+        let non_exec_file = tmp_dir.join("test_manual_cli_non_exec.txt");
+        let _ = std::fs::write(&non_exec_file, "plain text file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&non_exec_file, std::fs::Permissions::from_mode(0o644));
+            let err_non_exec = validate_manual_cli_path(Some(non_exec_file.to_str().unwrap())).unwrap_err();
+            assert!(err_non_exec.contains("not executable"));
+        }
+
+        // 5. Executable file passes
+        let exec_file = tmp_dir.join("test_manual_cli_exec.sh");
+        let _ = std::fs::write(&exec_file, "#!/bin/sh\nexit 0\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&exec_file, std::fs::Permissions::from_mode(0o755));
+        }
+        assert!(validate_manual_cli_path(Some(exec_file.to_str().unwrap())).is_ok());
+
+        // Clean up
+        let _ = std::fs::remove_file(&non_exec_file);
+        let _ = std::fs::remove_file(&exec_file);
+    }
+
+    #[test]
+    fn tauri_conf_csp_inspect_test() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let conf_path = manifest_dir.join("tauri.conf.json");
+        let content = std::fs::read_to_string(&conf_path).expect("read tauri.conf.json");
+        let json: serde_json::Value = serde_json::from_str(&content).expect("parse tauri.conf.json");
+        let csp = json["app"]["security"]["csp"].as_str().expect("csp string");
+
+        // Parse directives
+        let directives: Vec<&str> = csp.split(';').map(str::trim).collect();
+        let img_src = directives
+            .iter()
+            .find(|d| d.starts_with("img-src"))
+            .expect("img-src directive");
+        let connect_src = directives
+            .iter()
+            .find(|d| d.starts_with("connect-src"))
+            .expect("connect-src directive");
+
+        // img-src must NOT contain wildcard "https:"
+        let img_tokens: Vec<&str> = img_src.split_whitespace().collect();
+        assert!(
+            !img_tokens.contains(&"https:"),
+            "img-src must not contain wildcard https: in CSP: {img_src}"
+        );
+        // img-src must contain enumerated domains
+        assert!(img_tokens.contains(&"https://pbs.twimg.com"));
+        assert!(img_tokens.contains(&"https://ton.twimg.com"));
+        assert!(img_tokens.contains(&"https://abs.twimg.com"));
+        assert!(img_tokens.contains(&"https://video.twimg.com"));
+        assert!(img_tokens.contains(&"https://avatars.githubusercontent.com"));
+
+        // connect-src must NOT contain wildcard "ws:"
+        let connect_tokens: Vec<&str> = connect_src.split_whitespace().collect();
+        assert!(
+            !connect_tokens.contains(&"ws:"),
+            "connect-src must not contain wildcard ws: in CSP: {connect_src}"
+        );
+        // connect-src must contain loopback ws and wss:
+        assert!(connect_tokens.contains(&"ws://127.0.0.1:*"));
+        assert!(connect_tokens.contains(&"ws://localhost:*"));
+        assert!(connect_tokens.contains(&"wss:"));
+    }
+
+    #[test]
+    fn capabilities_split_verification_test() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let default_path = manifest_dir.join("capabilities/default.json");
+        let main_only_path = manifest_dir.join("capabilities/main-only.json");
+
+        let default_content = std::fs::read_to_string(&default_path).expect("read default.json");
+        let main_only_content = std::fs::read_to_string(&main_only_path).expect("read main-only.json");
+
+        let default_json: serde_json::Value = serde_json::from_str(&default_content).expect("parse default.json");
+        let main_only_json: serde_json::Value = serde_json::from_str(&main_only_content).expect("parse main-only.json");
+
+        let sensitive = [
+            "core:webview:allow-create-webview",
+            "core:webview:allow-create-webview-window",
+            "updater:allow-check",
+            "updater:allow-download",
+            "updater:allow-install",
+            "process:allow-restart",
+        ];
+
+        let default_perms: Vec<&str> = default_json["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        for s in &sensitive {
+            assert!(
+                !default_perms.contains(s),
+                "default.json should not contain sensitive permission {s}"
+            );
+        }
+
+        let main_perms: Vec<&str> = main_only_json["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        for s in &sensitive {
+            assert!(
+                main_perms.contains(s),
+                "main-only.json must contain sensitive permission {s}"
+            );
+        }
+
+        let main_windows: Vec<&str> = main_only_json["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(main_windows, vec!["main"]);
+    }
+
+    #[test]
+    fn html_browser_iframe_sandbox_inspect_test() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let html_browser_path = manifest_dir.join("../src/components/HtmlBrowser.tsx");
+        let content = std::fs::read_to_string(&html_browser_path).expect("read HtmlBrowser.tsx");
+
+        // Must contain iframe
+        assert!(content.contains("<iframe"), "HtmlBrowser must contain <iframe");
+        // Must contain sandbox="allow-scripts"
+        assert!(
+            content.contains("sandbox=\"allow-scripts\""),
+            "HtmlBrowser must contain sandbox=\"allow-scripts\""
+        );
+        // Must strictly omit allow-same-origin
+        assert!(
+            !content.contains("allow-same-origin"),
+            "HtmlBrowser must strictly omit allow-same-origin"
+        );
+    }
+}
+

@@ -354,7 +354,87 @@ pub fn repair_sanitize_proxy_bases() -> Result<bool, String> {
     Ok(changed)
 }
 
+/// Validate that Host header is loopback.
+pub fn is_loopback_host(host_val: &str) -> bool {
+    let trimmed = host_val.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let host_part = if trimmed.starts_with('[') {
+        if let Some(end) = trimmed.find(']') {
+            &trimmed[1..end]
+        } else {
+            return false;
+        }
+    } else {
+        trimmed.split(':').next().unwrap_or("")
+    };
+    let h = host_part.to_ascii_lowercase();
+    h == "127.0.0.1" || h == "localhost" || h == "::1"
+}
+
+/// Validate that Origin header (if present) is loopback or Tauri internal scheme.
+pub fn is_trusted_origin(origin_val: &str) -> bool {
+    let trimmed = origin_val.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower == "tauri://localhost" || lower == "https://tauri.localhost" {
+        return true;
+    }
+    for scheme in &["http://", "https://"] {
+        if let Some(rest) = lower.strip_prefix(scheme) {
+            let host_part = if rest.starts_with('[') {
+                if let Some(end) = rest.find(']') {
+                    &rest[1..end]
+                } else {
+                    return false;
+                }
+            } else {
+                rest.split(':').next().unwrap_or("").split('/').next().unwrap_or("")
+            };
+            if host_part == "127.0.0.1" || host_part == "localhost" || host_part == "::1" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Validate request headers for relay stream proxy:
+/// 1. Host must be loopback (127.0.0.1, localhost).
+/// 2. Origin (if present) must be loopback or Tauri scheme.
+/// 3. Sec-Fetch-Site must not be cross-site.
+pub fn validate_proxy_headers(headers: &HeaderMap) -> Result<(), (StatusCode, &'static str)> {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .ok_or((StatusCode::FORBIDDEN, "Forbidden: missing Host header"))?;
+    if !is_loopback_host(host) {
+        return Err((StatusCode::FORBIDDEN, "Forbidden: non-loopback Host"));
+    }
+
+    if let Some(origin) = headers.get(header::ORIGIN).and_then(|o| o.to_str().ok()) {
+        if !is_trusted_origin(origin) {
+            return Err((StatusCode::FORBIDDEN, "Forbidden: untrusted Origin"));
+        }
+    }
+
+    if let Some(sfs) = headers.get("sec-fetch-site").and_then(|s| s.to_str().ok()) {
+        if sfs.trim().eq_ignore_ascii_case("cross-site") {
+            return Err((StatusCode::FORBIDDEN, "Forbidden: cross-site fetch rejected"));
+        }
+    }
+
+    Ok(())
+}
+
 async fn proxy_fallback(req: Request) -> Response {
+    if let Err((status, msg)) = validate_proxy_headers(req.headers()) {
+        tracing::warn!(target: "relay_stream_proxy", "forbidden request: {msg}");
+        return (status, msg).into_response();
+    }
     match proxy_request(req).await {
         Ok(r) => r,
         Err(e) => {
@@ -688,5 +768,79 @@ mod tests {
         push_utf8_stream(&mut pending, a, &mut out);
         push_utf8_stream(&mut pending, b, &mut out);
         assert_eq!(out, text);
+    }
+
+    #[test]
+    fn loopback_host_validation() {
+        assert!(is_loopback_host("127.0.0.1"));
+        assert!(is_loopback_host("127.0.0.1:8080"));
+        assert!(is_loopback_host("localhost"));
+        assert!(is_loopback_host("localhost:54321"));
+        assert!(is_loopback_host("[::1]:8080"));
+        assert!(is_loopback_host("[::1]"));
+
+        assert!(!is_loopback_host("evil.com"));
+        assert!(!is_loopback_host("attacker.com:8080"));
+        assert!(!is_loopback_host("127.0.0.1.attacker.com"));
+        assert!(!is_loopback_host("192.168.1.100"));
+        assert!(!is_loopback_host(""));
+        assert!(!is_loopback_host("   "));
+    }
+
+    #[test]
+    fn trusted_origin_validation() {
+        assert!(is_trusted_origin("tauri://localhost"));
+        assert!(is_trusted_origin("https://tauri.localhost"));
+        assert!(is_trusted_origin("http://127.0.0.1:5173"));
+        assert!(is_trusted_origin("http://localhost:5173"));
+        assert!(is_trusted_origin("http://127.0.0.1"));
+        assert!(is_trusted_origin("http://localhost"));
+        assert!(is_trusted_origin("http://[::1]:3000"));
+
+        assert!(!is_trusted_origin("https://evil.com"));
+        assert!(!is_trusted_origin("http://attacker.com:8080"));
+        assert!(!is_trusted_origin("null"));
+        assert!(!is_trusted_origin("http://127.0.0.1.attacker.com"));
+        assert!(!is_trusted_origin(""));
+    }
+
+    #[test]
+    fn validate_proxy_headers_accepts_loopback_and_rejects_external() {
+        let mut h = HeaderMap::new();
+        h.insert(header::HOST, "127.0.0.1:1234".parse().unwrap());
+        assert!(validate_proxy_headers(&h).is_ok());
+
+        // Origin present and trusted
+        h.insert(header::ORIGIN, "http://127.0.0.1:5173".parse().unwrap());
+        assert!(validate_proxy_headers(&h).is_ok());
+
+        // Origin untrusted -> 403 Forbidden
+        h.insert(header::ORIGIN, "https://evil.com".parse().unwrap());
+        let res = validate_proxy_headers(&h);
+        assert_eq!(res.unwrap_err().0, StatusCode::FORBIDDEN);
+
+        // Reset origin to valid
+        h.insert(header::ORIGIN, "tauri://localhost".parse().unwrap());
+
+        // Sec-Fetch-Site cross-site -> 403 Forbidden
+        h.insert("sec-fetch-site", "cross-site".parse().unwrap());
+        let res = validate_proxy_headers(&h);
+        assert_eq!(res.unwrap_err().0, StatusCode::FORBIDDEN);
+
+        // Sec-Fetch-Site same-origin / same-site / none -> Ok
+        h.insert("sec-fetch-site", "same-origin".parse().unwrap());
+        assert!(validate_proxy_headers(&h).is_ok());
+        h.insert("sec-fetch-site", "none".parse().unwrap());
+        assert!(validate_proxy_headers(&h).is_ok());
+
+        // External Host -> 403 Forbidden
+        h.insert(header::HOST, "evil.com:1234".parse().unwrap());
+        let res = validate_proxy_headers(&h);
+        assert_eq!(res.unwrap_err().0, StatusCode::FORBIDDEN);
+
+        // Missing Host -> 403 Forbidden
+        h.remove(header::HOST);
+        let res = validate_proxy_headers(&h);
+        assert_eq!(res.unwrap_err().0, StatusCode::FORBIDDEN);
     }
 }

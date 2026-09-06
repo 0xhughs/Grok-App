@@ -64,16 +64,28 @@ fn truncate_text(s: &str, max: usize) -> String {
 }
 
 /// Build headless argv (without binary path). Pure for tests.
-pub fn batch_headless_args(prompt: &str) -> Vec<String> {
-    vec![
+pub fn batch_headless_args(prompt: &str, parent_policy: Option<&str>) -> Vec<String> {
+    let mut args = vec![
         "-p".into(),
         prompt.to_string(),
-        "--always-approve".into(),
+        "--no-subagents".into(),
+        "--disallowed-tools".into(),
+        "run_terminal_cmd,run_terminal_command,search_replace,write,Agent,spawn_subagent,bash,bash_tool".into(),
         "--max-turns".into(),
         "8".into(),
         "--output-format".into(),
         "plain".into(),
-    ]
+    ];
+    let is_yolo = parent_policy.map_or(false, |pol| {
+        matches!(
+            crate::permission::PermissionPolicy::parse(pol),
+            crate::permission::PermissionPolicy::AlwaysApprove
+        )
+    });
+    if is_yolo {
+        args.push("--always-approve".into());
+    }
+    args
 }
 
 enum ThreadWait<T> {
@@ -102,11 +114,13 @@ fn wait_thread<T: Send + 'static>(
     }
 }
 
-/// One-shot headless turn for a project cwd. Soft-fails; never panics.
-pub fn run_batch_headless(
+/// Run headless batch turn following parent session policy.
+/// If no session is present, refuses with `no_session`.
+pub fn batch_agents_headless(
     project_path: &str,
     prompt: &str,
     timeout_ms: Option<u64>,
+    parent_policy: Option<&str>,
 ) -> BatchHeadlessResult {
     let started = Instant::now();
     let prompt = prompt.trim();
@@ -139,7 +153,43 @@ pub fn run_batch_headless(
             started.elapsed().as_millis() as u64,
         );
     }
+    let Some(policy) = parent_policy.filter(|p| !p.trim().is_empty()) else {
+        return soft_fail(
+            "no_session",
+            None,
+            None,
+            None,
+            started.elapsed().as_millis() as u64,
+        );
+    };
 
+    run_batch_headless_inner(prompt, &cwd_path, timeout_ms, started, Some(policy))
+}
+
+/// One-shot headless turn for a project cwd. Soft-fails; never panics.
+/// Resolves parent session policy; if no session exists, refuses.
+pub fn run_batch_headless(
+    project_path: &str,
+    prompt: &str,
+    timeout_ms: Option<u64>,
+) -> BatchHeadlessResult {
+    let sessions = store::load_sessions_index();
+    let first = sessions.first();
+    let parent_policy = first.map(|s| {
+        s.permission_policy
+            .as_deref()
+            .unwrap_or("ask")
+    });
+    batch_agents_headless(project_path, prompt, timeout_ms, parent_policy)
+}
+
+fn run_batch_headless_inner(
+    prompt: &str,
+    cwd_path: &std::path::Path,
+    timeout_ms: Option<u64>,
+    started: Instant,
+    parent_policy: Option<&str>,
+) -> BatchHeadlessResult {
     let settings = store::load_settings();
     let probe = cli_probe::probe_cli(settings.manual_cli_path.as_deref());
     if !probe.found {
@@ -165,10 +215,10 @@ pub fn run_batch_headless(
     };
     let cli_version = probe.version.clone();
     let timeout = Duration::from_millis(clamp_timeout_ms(timeout_ms));
-    let args = batch_headless_args(prompt);
+    let args = batch_headless_args(prompt, parent_policy);
 
     let cli_path_clone = cli_path.clone();
-    let cwd_clone = cwd_path.clone();
+    let cwd_clone = cwd_path.to_path_buf();
     let mode = settings.session_data_mode.clone();
     let handle = std::thread::spawn(move || {
         let mut cmd = Command::new(&cli_path_clone);
@@ -255,13 +305,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn args_include_plain_output() {
-        let a = batch_headless_args("hello");
-        assert!(a.contains(&"-p".into()));
-        assert!(a.contains(&"hello".into()));
-        assert!(a.contains(&"--output-format".into()));
-        assert!(a.contains(&"plain".into()));
-        assert!(a.contains(&"--always-approve".into()));
+    fn args_restricted_in_ask_and_always_approve_in_yolo() {
+        let ask_args = batch_headless_args("hello", Some("ask"));
+        assert!(ask_args.contains(&"-p".into()));
+        assert!(ask_args.contains(&"hello".into()));
+        assert!(ask_args.contains(&"--output-format".into()));
+        assert!(ask_args.contains(&"plain".into()));
+        assert!(ask_args.contains(&"--no-subagents".into()));
+        assert!(ask_args.contains(&"--disallowed-tools".into()));
+        assert!(!ask_args.contains(&"--always-approve".into()));
+        let dt_idx = ask_args.iter().position(|x| x == "--disallowed-tools").unwrap();
+        let dt_val = &ask_args[dt_idx + 1];
+        assert!(dt_val.contains("run_terminal_cmd"));
+        assert!(dt_val.contains("write"));
+        assert!(dt_val.contains("Agent"));
+
+        let yolo_args = batch_headless_args("hello", Some("always_approve"));
+        assert!(yolo_args.contains(&"--no-subagents".into()));
+        assert!(yolo_args.contains(&"--disallowed-tools".into()));
+        assert!(yolo_args.contains(&"--always-approve".into()));
+
+        let default_args = batch_headless_args("hello", None);
+        assert!(default_args.contains(&"--no-subagents".into()));
+        assert!(default_args.contains(&"--disallowed-tools".into()));
+        assert!(!default_args.contains(&"--always-approve".into()));
+    }
+
+    #[test]
+    fn no_session_refuses() {
+        let r = batch_agents_headless("/tmp", "hello", None, None);
+        assert!(!r.ok);
+        assert_eq!(r.reason.as_deref(), Some("no_session"));
     }
 
     #[test]

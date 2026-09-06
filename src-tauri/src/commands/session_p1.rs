@@ -26,6 +26,19 @@ pub async fn session_get_state(
 }
 
 /// Connect the live slot to an agent process (cold spawn or warm reuse).
+pub fn validate_session_connect_path(project_path: Option<&str>) -> Result<(), String> {
+    if let Some(path) = project_path {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            let projects = store::load_projects();
+            if !store::is_trusted_project_path(&projects, trimmed) {
+                return Err("project_path must be a registered, trusted project".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn session_connect(
     app: tauri::AppHandle,
@@ -35,6 +48,7 @@ pub async fn session_connect(
     mode: Option<String>,
     ssh_alias: Option<String>,
 ) -> Result<SessionSnapshot, String> {
+    validate_session_connect_path(project_path.as_deref())?;
     mgr.connect(app, project_path, session_id, mode, ssh_alias)
         .await
 }
@@ -272,14 +286,15 @@ pub async fn session_resolve_permission(
     rpc_id: u64,
     decision: String,
     option_id: Option<String>,
-    scope_key: Option<String>,
+    _scope_key: Option<String>,
     session_id: Option<String>,
     // Optional UI options snapshot for wire-id coerce when Host pending is empty (#542).
     options: Option<serde_json::Value>,
     tool_name: Option<String>,
 ) -> Result<SessionSnapshot, String> {
+    // P4: Client-supplied scope is ignored; host recomputes from the pending request.
     mgr.resolve_permission(
-        app, rpc_id, decision, option_id, scope_key, session_id, options, tool_name,
+        app, rpc_id, decision, option_id, None, session_id, options, tool_name,
     )
     .await
 }
@@ -1176,3 +1191,50 @@ pub async fn media_read_file_chunk(
     .map_err(|e| format!("media_read_file_chunk task failed: {e}"))??;
     Ok(tauri::ipc::Response::new(bytes))
 }
+
+#[cfg(test)]
+mod session_connect_tests {
+    use super::*;
+
+    #[test]
+    fn session_connect_path_validation() {
+        // 1. None or empty passes
+        assert!(validate_session_connect_path(None).is_ok());
+        assert!(validate_session_connect_path(Some("")).is_ok());
+        assert!(validate_session_connect_path(Some("   ")).is_ok());
+
+        // 2. Unregistered path rejected
+        assert!(validate_session_connect_path(Some("/unregistered/arbitrary/path")).is_err());
+
+        // 3. Registered untrusted rejected
+        let mut list = store::load_projects();
+        let untrusted_path = "/tmp/test-untrusted-p1-cwd";
+        list.push(store::Project {
+            id: "test-untrusted-p1".into(),
+            name: "untrusted".into(),
+            path: untrusted_path.into(),
+            trusted: false,
+            last_opened_at: chrono::Utc::now(),
+            path_ok: true,
+            pinned: false,
+            system: false,
+            model_id: None,
+            effort: None,
+            mode: None,
+            permission_policy: None,
+            sandbox_profile: None,
+            color: None,
+            ssh_alias: None,
+        });
+        let _ = store::save_projects(&list);
+
+        let err = validate_session_connect_path(Some(untrusted_path)).unwrap_err();
+        assert_eq!(err, "project_path must be a registered, trusted project");
+
+        // Clean up
+        let mut clean = store::load_projects();
+        clean.retain(|p| p.id != "test-untrusted-p1");
+        let _ = store::save_projects(&clean);
+    }
+}
+

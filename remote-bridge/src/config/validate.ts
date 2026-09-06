@@ -111,11 +111,13 @@ export function validateConfig(config: AppConfig): ValidationResult {
         }
       }
       const allowFrom = b.allow_from ?? p.allow_from;
-      if (!allowFrom || !String(allowFrom).trim()) {
+      const trimmed = allowFrom ? String(allowFrom).trim() : "";
+      const tokens = trimmed ? trimmed.split(",").map((s) => s.trim()) : [];
+      if (!trimmed || trimmed === "*" || tokens.includes("*")) {
         issues.push({
-          level: "warn",
+          level: "error",
           code: "permit_all_allow_from",
-          message: `Project ${p.name}: empty allow_from permits all users`,
+          message: `Project ${p.name}: empty allow_from or '*' wildcard is not permitted (must specify explicit sender IDs)`,
         });
       }
     }

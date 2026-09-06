@@ -100,8 +100,8 @@ export function HtmlBrowser({
         "rp-preview__frame rp-preview__frame--browser " + className
       }
       title={title}
-      // Full document; no sandbox so inline scripts (copy buttons) work
       srcDoc={doc}
+      sandbox="allow-scripts"
       allow="clipboard-read; clipboard-write; fullscreen"
     />
   );

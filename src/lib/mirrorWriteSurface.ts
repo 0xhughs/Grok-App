@@ -17,7 +17,6 @@ export type MirrorWriteCategoryId =
   | "permissions"
   | "askUser"
   | "plan"
-  | "delete"
   | "rename";
 
 export type MirrorWriteCategory = {
@@ -31,14 +30,13 @@ export type MirrorWriteCategory = {
  * Order is presentation order.
  */
 export const MIRROR_WRITE_CATEGORIES: readonly MirrorWriteCategory[] = [
-  { id: "send", methods: ["session.send"] },
+  { id: "send", methods: ["session.send", "voice.transcribe"] },
   { id: "stop", methods: ["session.stop"] },
-  { id: "sessions", methods: ["session.create"] },
+  { id: "sessions", methods: ["session.create", "session.connect"] },
   { id: "permissions", methods: ["session.resolvePermission"] },
-  { id: "askUser", methods: ["session.answerAskUser"] },
-  { id: "plan", methods: ["session.reviewPlan"] },
-  { id: "delete", methods: ["session.delete"] },
-  { id: "rename", methods: ["session.rename"] },
+  { id: "askUser", methods: ["session.resolveAskUser"] },
+  { id: "plan", methods: ["session.resolvePlan"] },
+  { id: "rename", methods: ["session.rename", "session.autoTitle"] },
 ] as const;
 
 /** Flat list of write methods (same order as categories). */

@@ -1,13 +1,14 @@
 # Remote control security
 
 - Phone mirror defaults to **read-only**; enable “Allow phone to send” for writes (in-app confirm + persistent warning banner while write is on).
-- Phone mirror HTTP **defaults to loopback** (`127.0.0.1`). Same-LAN access is opt-in (“Allow same Wi-Fi”, in-app confirm) and rebinds `0.0.0.0`; copy/QR then use the detected LAN IPv4. Token path still required; HTTP stays unencrypted.
+- Phone mirror HTTP **defaults to loopback** (`127.0.0.1`). Same-LAN access is opt-in (“Allow same Wi-Fi”, in-app confirm) and rebinds `0.0.0.0`; copy/QR then use the detected LAN IPv4. Token path still required; HTTP stays unencrypted. Cloudflared tunnel publication is strictly opt-in (`tunnel_enabled` / Settings → Publish cloudflared tunnel) and is never started automatically.
 - While write is on, the Connect panel lists **allowlisted write RPC categories** and shows a **broad-surface** warning (full allowlist is open; filesystem / desktop-only commands stay blocked).
 - Optional **max phone clients** (1–16, default 4): extra WebSocket upgrades get HTTP 503 (soft-fail). Connect panel shows a live cap bar/chip, full/near-full honesty, zero-client empty state when host is up, and never invents clients while stopped.
 - Toggling write access writes an audit line to `app.log` (no tokens/URLs). Local write-ACL audit ring (localStorage) also records enable/disable, rotate, host start/stop — never secrets.
 - **Regenerate link** requires in-app confirm (mentions connected client count), rotates the token, disconnects old QR sessions; host logs `token_tail` only.
 - Auth rejection and host start logs **redact** path tokens / public URLs (`/t/<redacted>/…`, `token_tail`).
 - IM allow-from and LINE signature checks ship in 0.1.9+.
+- **WeCom webhook authentication**: Official WeCom webhooks authenticate via Tencent signature (`msg_signature`, `timestamp`, `nonce`). Shared-token fallback (`x-grok-wecom-token`) is **disabled by default** (fails closed with 401 Unauthorized); it requires explicit opt-in via instance option `allow_shared_token: true`.
 
 ## Security ops surface (overview)
 

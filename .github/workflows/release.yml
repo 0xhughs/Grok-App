@@ -72,16 +72,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup pnpm
         # Do not hardcode version — package.json packageManager (pnpm@9.15.9)
         # is the single source. Dual version input fails with:
         # "Multiple versions of pnpm specified".
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832e0b4 # v4.0.3
         with:
           node-version: 22
           cache: pnpm
@@ -102,12 +102,12 @@ jobs:
             file
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4dd2f0b9f5e4277b5a8eb2a6fb368c22119fa9d1 # stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@f0deed1e0edfc6a9be954172b8c0ab617c49165c # v2.7.7
         with:
           workspaces: "./src-tauri -> target"
           shared-key: ${{ matrix.name }}
@@ -283,7 +283,7 @@ jobs:
           fi
 
       - name: Build Tauri app & attach to GitHub Release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@b70ec574c8034d6beea488582d1c9ef2cf1c9cb4 # v0.5.17
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GROK_UPDATER_PUBLIC_KEY: ${{ secrets.GROK_UPDATER_PUBLIC_KEY }}
@@ -378,7 +378,7 @@ jobs:
     name: Assemble updater latest.json
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Assemble rolling grok-desktop-latest
         shell: bash
@@ -409,7 +409,7 @@ jobs:
     name: Publish SHA256SUMS + website downloads
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Compute and upload SHA256SUMS + website download contract
         shell: bash

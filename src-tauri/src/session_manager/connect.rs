@@ -246,7 +246,37 @@ impl SessionManager {
         Self::emit_state(app, &snap);
         snap
     }
+}
 
+/// Resolve safe cwd for session connect: explicit path (if trusted) → session's bound project (if trusted) → general workspace.
+pub fn resolve_connect_cwd(
+    project_path: Option<&str>,
+    project_id: Option<&str>,
+    projects: &[store::Project],
+) -> std::path::PathBuf {
+    let from_arg = project_path
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(|p| {
+            store::find_trusted_project_by_path(projects, p)
+                .map(|proj| std::path::PathBuf::from(&proj.path))
+        });
+    let from_meta = project_id.and_then(|pid| {
+        if pid == store::GENERAL_PROJECT_ID {
+            return None;
+        }
+        projects
+            .iter()
+            .find(|p| p.id == pid && p.trusted)
+            .map(|p| std::path::PathBuf::from(&p.path))
+    });
+    from_arg.or(from_meta).unwrap_or_else(|| {
+        let _ = store::ensure_general_workspace_dir();
+        crate::paths::general_workspace_dir()
+    })
+}
+
+impl SessionManager {
     pub(super) async fn connect_inner(
         self: &Arc<Self>,
         app: AppHandle,
@@ -301,7 +331,7 @@ impl SessionManager {
         let path_hint = project_path
             .as_deref()
             .map(str::trim)
-            .filter(|s| !s.is_empty());
+            .filter(|s| !s.is_empty() && store::is_trusted_project_path(&projects, s));
         let path_alias = path_hint.and_then(|path| {
             projects
                 .iter()
@@ -314,28 +344,13 @@ impl SessionManager {
             path_alias,
         );
 
-        // Resolve cwd: explicit path → session's project path → general workspace.
+        // Resolve cwd: explicit path (if trusted) → session's project path (if trusted) → general workspace.
         // Never use process cwd (Dock-launched macOS apps often have cwd `/`).
-        let cwd = {
-            let from_arg = project_path
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(std::path::PathBuf::from);
-            let from_meta = meta.project_id.as_deref().and_then(|pid| {
-                if pid == store::GENERAL_PROJECT_ID {
-                    return None;
-                }
-                projects
-                    .iter()
-                    .find(|p| p.id == pid)
-                    .map(|p| std::path::PathBuf::from(&p.path))
-            });
-            from_arg.or(from_meta).unwrap_or_else(|| {
-                let _ = store::ensure_general_workspace_dir();
-                crate::paths::general_workspace_dir()
-            })
-        };
+        let cwd = resolve_connect_cwd(
+            project_path.as_deref(),
+            meta.project_id.as_deref(),
+            &projects,
+        );
         let project_path = Some(cwd.to_string_lossy().to_string());
         if meta.project_id.is_none() {
             if let Some(alias) = ssh_alias.as_deref() {

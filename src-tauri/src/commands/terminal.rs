@@ -29,6 +29,20 @@ pub async fn path_exists_many(paths: Vec<String>) -> Result<PathExistsManyResult
     .map_err(|e| format!("path_exists_many join: {e}"))
 }
 
+/// Validate project_path for terminal PTY spawn against registered, trusted projects.
+pub fn validate_terminal_project_path(project_path: Option<&str>) -> Result<(), String> {
+    if let Some(path) = project_path {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            let projects = crate::store::load_projects();
+            if !crate::store::is_trusted_project_path(&projects, trimmed) {
+                return Err("project_path must be a registered, trusted project".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Spawn interactive login shell PTY (`$SHELL -l -i`). Streams on `terminal://data`.
 /// When `ssh_alias` is set, the PTY runs `ssh -tt` on that host instead.
 #[tauri::command]
@@ -40,6 +54,7 @@ pub async fn terminal_pty_spawn(
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<pty_host::PtySpawnResult, String> {
+    validate_terminal_project_path(project_path.as_deref())?;
     let cols = cols.unwrap_or(80);
     let rows = rows.unwrap_or(24);
     tauri::async_runtime::spawn_blocking(move || {
@@ -151,4 +166,78 @@ pub async fn side_browser_snapshot(app: AppHandle, label: String) -> Result<Stri
 #[tauri::command]
 pub fn side_browser_install_download_hook(app: AppHandle, label: String) -> Result<(), String> {
     crate::side_browser_blob::install_hook(&app, label)
+}
+
+#[cfg(test)]
+mod terminal_tests {
+    use super::*;
+
+    #[test]
+    fn terminal_pty_spawn_rejects_untrusted_project_path() {
+        // 1. None or empty passes
+        assert!(validate_terminal_project_path(None).is_ok());
+        assert!(validate_terminal_project_path(Some("")).is_ok());
+        assert!(validate_terminal_project_path(Some("   ")).is_ok());
+
+        // 2. Unregistered path rejected
+        let err_unregistered = validate_terminal_project_path(Some("/unregistered/arbitrary/path"));
+        assert!(err_unregistered.is_err());
+        assert_eq!(
+            err_unregistered.unwrap_err(),
+            "project_path must be a registered, trusted project"
+        );
+
+        // 3. Registered untrusted rejected
+        let mut list = store::load_projects();
+        let untrusted_path = "/tmp/test-untrusted-terminal-cwd";
+        list.push(store::Project {
+            id: "test-untrusted-terminal".into(),
+            name: "untrusted".into(),
+            path: untrusted_path.into(),
+            trusted: false,
+            last_opened_at: chrono::Utc::now(),
+            path_ok: true,
+            pinned: false,
+            system: false,
+            model_id: None,
+            effort: None,
+            mode: None,
+            permission_policy: None,
+            sandbox_profile: None,
+            color: None,
+            ssh_alias: None,
+        });
+        let _ = store::save_projects(&list);
+
+        let err = validate_terminal_project_path(Some(untrusted_path)).unwrap_err();
+        assert_eq!(err, "project_path must be a registered, trusted project");
+
+        // 4. Registered trusted project passes
+        let trusted_path = "/tmp/test-trusted-terminal-cwd";
+        list.push(store::Project {
+            id: "test-trusted-terminal".into(),
+            name: "trusted".into(),
+            path: trusted_path.into(),
+            trusted: true,
+            last_opened_at: chrono::Utc::now(),
+            path_ok: true,
+            pinned: false,
+            system: false,
+            model_id: None,
+            effort: None,
+            mode: None,
+            permission_policy: None,
+            sandbox_profile: None,
+            color: None,
+            ssh_alias: None,
+        });
+        let _ = store::save_projects(&list);
+
+        assert!(validate_terminal_project_path(Some(trusted_path)).is_ok());
+
+        // Clean up
+        let mut clean = store::load_projects();
+        clean.retain(|p| p.id != "test-untrusted-terminal" && p.id != "test-trusted-terminal");
+        let _ = store::save_projects(&clean);
+    }
 }

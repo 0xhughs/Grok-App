@@ -347,10 +347,12 @@ impl SessionManager {
                 let preview = permission_preview_text(&raw, &title);
                 let path_target = extract_path_target(&raw);
                 let shell_command = extract_shell_command(&raw);
-                let sk_source = if path_target.is_empty() {
-                    title.clone()
-                } else {
+                let sk_source = if !shell_command.is_empty() {
+                    shell_command.clone()
+                } else if !path_target.is_empty() {
                     path_target.clone()
+                } else {
+                    title.clone()
                 };
                 let sk = scope_key(&tool_name, &sk_source);
                 let (auto, auto_deny, session_id, project_path) = {

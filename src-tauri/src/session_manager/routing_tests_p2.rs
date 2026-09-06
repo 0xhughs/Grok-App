@@ -557,3 +557,64 @@ fn rewind_busy_check_allows_idle_background_session() {
         "an unknown chat has no running turn to protect"
     );
 }
+
+#[test]
+fn resolve_connect_cwd_tests() {
+    let general_dir = crate::paths::general_workspace_dir();
+    let trusted_p1 = store::Project {
+        id: "proj-trusted-1".into(),
+        name: "trusted-1".into(),
+        path: "/projects/trusted-1".into(),
+        trusted: true,
+        last_opened_at: chrono::Utc::now(),
+        path_ok: true,
+        pinned: false,
+        system: false,
+        model_id: None,
+        effort: None,
+        mode: None,
+        permission_policy: None,
+        sandbox_profile: None,
+        color: None,
+        ssh_alias: None,
+    };
+    let untrusted_p2 = store::Project {
+        id: "proj-untrusted-2".into(),
+        name: "untrusted-2".into(),
+        path: "/projects/untrusted-2".into(),
+        trusted: false,
+        last_opened_at: chrono::Utc::now(),
+        path_ok: true,
+        pinned: false,
+        system: false,
+        model_id: None,
+        effort: None,
+        mode: None,
+        permission_policy: None,
+        sandbox_profile: None,
+        color: None,
+        ssh_alias: None,
+    };
+    let projects = vec![trusted_p1, untrusted_p2];
+
+    // 1. Explicit trusted path matches
+    let res1 = connect::resolve_connect_cwd(Some("/projects/trusted-1"), None, &projects);
+    assert_eq!(res1, std::path::PathBuf::from("/projects/trusted-1"));
+
+    // 2. Explicit untrusted path rejected -> falls back to general workspace
+    let res2 = connect::resolve_connect_cwd(Some("/projects/untrusted-2"), None, &projects);
+    assert_eq!(res2, general_dir);
+
+    // 3. Explicit unregistered path rejected -> falls back to general workspace
+    let res3 = connect::resolve_connect_cwd(Some("/arbitrary/unregistered/dir"), None, &projects);
+    assert_eq!(res3, general_dir);
+
+    // 4. Explicit untrusted path rejected -> falls back to bound trusted project
+    let res4 = connect::resolve_connect_cwd(Some("/projects/untrusted-2"), Some("proj-trusted-1"), &projects);
+    assert_eq!(res4, std::path::PathBuf::from("/projects/trusted-1"));
+
+    // 5. Explicit untrusted path + bound untrusted project -> falls back to general workspace
+    let res5 = connect::resolve_connect_cwd(Some("/projects/untrusted-2"), Some("proj-untrusted-2"), &projects);
+    assert_eq!(res5, general_dir);
+}
+

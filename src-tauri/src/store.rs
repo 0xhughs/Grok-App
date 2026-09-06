@@ -356,6 +356,9 @@ pub struct AppSettings {
     /// the normal local-CLI spawn path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acp_server_addr: Option<String>,
+    /// Explicit confirmation flag required when setting a non-loopback `acp_server_addr`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm_remote_acp_server: Option<bool>,
     /// Max warm/live agent processes (I02). Default 3.
     #[serde(default = "default_max_concurrent_agents")]
     pub max_concurrent_agents: u32,
@@ -373,9 +376,9 @@ pub struct AppSettings {
     #[serde(default)]
     pub stream_stall_default_migrated: bool,
     /// Store App API keys in the OS keychain (macOS Keychain / Win Cred / Secret Service).
-    /// Default **false**: keys stay in `secrets.json` (0600) so cold start does not
-    /// trigger system password prompts. Official CLI login still uses `auth.json`.
-    #[serde(default)]
+    /// Default **true** when platform probe succeeds (`keychain_platform_ok()`),
+    /// with graceful fallback to `secrets.json` (0600).
+    #[serde(default = "default_store_api_keys_in_keychain")]
     pub store_api_keys_in_keychain: bool,
     /// OS-level sandbox profile for spawned `grok agent` processes
     /// (`off` | `workspace` | `read-only` | `strict` | `devbox`). Default off.
@@ -430,9 +433,9 @@ pub struct AppSettings {
     pub disable_web_search: bool,
     /// Inject MCP **official-aux** (isolated official auth) into **custom**
     /// main-route sessions only: `web_search`, all `x_*`, `vision_describe`.
-    /// Default **true**. Never applies on official Grok subscription route.
+    /// Default **false** (Slice 01 hardening: opt-in only). Never applies on official Grok subscription route.
     /// Grayed out in UI when no CLI login / official API key. Soft-respawns.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub official_aux_inject: bool,
     /// When official-aux inject is on, also load the user's other MCP servers
     /// into the same session. Default **false** so flaky Playwright /
@@ -676,6 +679,10 @@ fn default_stream_stall_seconds() -> u32 {
     crate::stream_stall::DEFAULT_STREAM_STALL_SECONDS
 }
 
+fn default_store_api_keys_in_keychain() -> bool {
+    crate::secrets::keychain_platform_ok()
+}
+
 fn default_sandbox_profile() -> String {
     // New installs + missing field: Workspace isolation (matches App DEFAULT_SANDBOX_PROFILE).
     // Existing settings that already persist "off" are unchanged.
@@ -759,13 +766,14 @@ impl Default for AppSettings {
             default_open_target: default_open_target(),
             composer_prefs_scope: default_composer_prefs_scope(),
             acp_server_addr: None,
+            confirm_remote_acp_server: None,
             max_concurrent_agents: default_max_concurrent_agents(),
             agent_idle_minutes: default_agent_idle_minutes(),
             // Fresh installs already start on the current default.
             pool_size_migrated: true,
             stream_stall_seconds: default_stream_stall_seconds(),
             stream_stall_default_migrated: true,
-            store_api_keys_in_keychain: false,
+            store_api_keys_in_keychain: crate::secrets::keychain_platform_ok(),
             sandbox_profile: default_sandbox_profile(),
             experimental_memory: false,
             compaction_mode: default_compaction_mode(),
@@ -776,7 +784,7 @@ impl Default for AppSettings {
             background_wait_timeout_sec: default_background_wait_timeout_sec(),
             include_partial_messages: false,
             disable_web_search: false,
-            official_aux_inject: true,
+            official_aux_inject: false,
             official_aux_with_user_mcp: false,
             no_ask_user: false,
             disallowed_tools: Vec::new(),
@@ -1290,6 +1298,39 @@ pub fn load_projects() -> Vec<Project> {
         }
     }
     list
+}
+
+/// Find a registered, trusted project matching `path`.
+pub fn find_trusted_project_by_path<'a>(projects: &'a [Project], path: &str) -> Option<&'a Project> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let query_p = std::path::Path::new(trimmed);
+    let query_canon = query_p.canonicalize().ok();
+    let query_trimmed = trimmed.trim_end_matches(['/', '\\']);
+    projects.iter().find(|p| {
+        if !p.trusted {
+            return false;
+        }
+        let proj_trimmed = p.path.trim().trim_end_matches(['/', '\\']);
+        if p.path == trimmed || proj_trimmed == query_trimmed {
+            return true;
+        }
+        if let Some(ref qc) = query_canon {
+            if let Ok(pc) = std::path::Path::new(&p.path).canonicalize() {
+                if &pc == qc {
+                    return true;
+                }
+            }
+        }
+        false
+    })
+}
+
+/// Validate whether `path` corresponds to a registered, trusted project.
+pub fn is_trusted_project_path(projects: &[Project], path: &str) -> bool {
+    find_trusted_project_by_path(projects, path).is_some()
 }
 
 /// Ensure `{app_data}/workspaces/general` exists (orphan chat default cwd).
@@ -2850,6 +2891,198 @@ fn collect_agent_home_api_keys() -> Vec<String> {
     out
 }
 
+fn is_jwt(s: &str) -> bool {
+    if !s.starts_with("eyJ") {
+        return false;
+    }
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    parts.iter().all(|p| {
+        !p.is_empty()
+            && p.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    })
+}
+
+fn is_telegram_bot_token(s: &str) -> bool {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 2 {
+        return false;
+    }
+    let (id, secret) = (parts[0], parts[1]);
+    id.len() >= 8
+        && id.chars().all(|c| c.is_ascii_digit())
+        && secret.len() >= 30
+        && secret
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn is_slack_token(s: &str) -> bool {
+    (s.starts_with("xoxb-")
+        || s.starts_with("xoxa-")
+        || s.starts_with("xoxp-")
+        || s.starts_with("xoxr-")
+        || s.starts_with("xoxs-")
+        || s.starts_with("xox-"))
+        && s.len() >= 15
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn is_github_token(s: &str) -> bool {
+    (s.starts_with("ghp_")
+        || s.starts_with("gho_")
+        || s.starts_with("ghu_")
+        || s.starts_with("ghs_")
+        || s.starts_with("ghr_"))
+        && s.len() >= 20
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn is_standard_api_key(s: &str) -> bool {
+    (s.starts_with("sk-") || s.starts_with("xai-"))
+        && s.len() >= 20
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn is_high_entropy_token(s: &str) -> bool {
+    if s.len() >= 32 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        let has_digit = s.chars().any(|c| c.is_ascii_digit());
+        let has_alpha = s.chars().any(|c| c.is_ascii_alphabetic());
+        if (has_digit && has_alpha) || s.len() >= 40 {
+            return true;
+        }
+    }
+    if s.len() >= 40
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=' || c == '_' || c == '-')
+    {
+        let has_lower = s.chars().any(|c| c.is_ascii_lowercase());
+        let has_upper = s.chars().any(|c| c.is_ascii_uppercase());
+        let has_digit = s.chars().any(|c| c.is_ascii_digit());
+        if has_lower && has_upper && has_digit {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_sensitive_token(s: &str) -> bool {
+    is_jwt(s)
+        || is_telegram_bot_token(s)
+        || is_slack_token(s)
+        || is_github_token(s)
+        || is_standard_api_key(s)
+        || is_high_entropy_token(s)
+}
+
+fn is_token_delimiter(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(
+            c,
+            '"' | '\'' | '`' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | '='
+                | '\\' | '|' | '^' | '?' | '&'
+        )
+}
+
+fn redact_bearer(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+
+    while i < n {
+        let is_start_boundary = i == 0 || !chars[i - 1].is_ascii_alphanumeric();
+        let remaining = n - i;
+        if is_start_boundary && remaining >= 6 {
+            let slice: String = chars[i..i + 6].iter().collect();
+            if slice.eq_ignore_ascii_case("bearer") {
+                let mut j = i + 6;
+                if j < n && chars[j] == ':' {
+                    j += 1;
+                }
+                if j < n && chars[j].is_whitespace() {
+                    while j < n && chars[j].is_whitespace() {
+                        j += 1;
+                    }
+                    let prefix: String = chars[i..j].iter().collect();
+                    out.push_str(&prefix);
+
+                    let token_start = j;
+                    while j < n
+                        && !chars[j].is_whitespace()
+                        && !matches!(chars[j], '"' | '\'' | '`' | ',' | ';')
+                    {
+                        j += 1;
+                    }
+                    let token: String = chars[token_start..j].iter().collect();
+                    if !token.is_empty() && token != "[REDACTED]" {
+                        out.push_str("[REDACTED]");
+                    } else {
+                        out.push_str(&token);
+                    }
+                    i = j;
+                    continue;
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    out
+}
+
+fn redact_sensitive_tokens(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+
+    while i < n {
+        let c = chars[i];
+        if is_token_delimiter(c) {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+
+        let start = i;
+        while i < n && !is_token_delimiter(chars[i]) {
+            i += 1;
+        }
+        let mut token: String = chars[start..i].iter().collect();
+
+        let mut trailing = String::new();
+        while !token.is_empty()
+            && (token.ends_with('.')
+                || token.ends_with(':')
+                || token.ends_with('?')
+                || token.ends_with('!'))
+        {
+            if is_jwt(&token) {
+                break;
+            }
+            let last = token.pop().unwrap();
+            trailing.insert(0, last);
+        }
+
+        if is_sensitive_token(&token) {
+            out.push_str("[REDACTED]");
+        } else {
+            out.push_str(&token);
+        }
+        out.push_str(&trailing);
+    }
+
+    out
+}
+
 /// Redact secrets from a string for logs/Doctor export.
 pub fn redact_text(input: &str) -> String {
     let mut out = input.to_string();
@@ -2867,19 +3100,8 @@ pub fn redact_text(input: &str) -> String {
             out = out.replace(&key, "[REDACTED]");
         }
     }
-    // common token scrubbing without regex crate
-    let mut cleaned = String::with_capacity(out.len());
-    for word in out.split_whitespace() {
-        if word.len() > 20
-            && (word.starts_with("sk-") || word.starts_with("xai-") || word.contains("Bearer"))
-        {
-            cleaned.push_str("[REDACTED]");
-        } else {
-            cleaned.push_str(word);
-        }
-        cleaned.push(' ');
-    }
-    cleaned
+    let bearer_scrubbed = redact_bearer(&out);
+    redact_sensitive_tokens(&bearer_scrubbed)
 }
 
 fn global_prefs(settings: &AppSettings) -> (String, String, String, String) {
@@ -3243,12 +3465,55 @@ mod tests {
     fn redact_scrubs_long_tokenish() {
         let s = "header Bearer sk-abcdefghijklmnopqrstuvwxyz123456 tail";
         let r = redact_text(s);
-        assert!(
-            !r.contains("sk-abcdefghijklmnopqrstuvwxyz123456")
-                || r.contains("REDACTED")
-                || r.contains("sk-")
-        );
+        assert!(!r.contains("sk-abcdefghijklmnopqrstuvwxyz123456"));
+        assert!(r.contains("[REDACTED]"));
         assert!(!r.is_empty());
+    }
+
+    #[test]
+    fn redact_scrubs_jwt_oidc() {
+        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.doNotLeakThisSignature1234567890";
+        let input = format!("User auth token: {jwt}");
+        let redacted = redact_text(&input);
+        assert!(!redacted.contains("doNotLeakThisSignature1234567890"));
+        assert!(redacted.contains("[REDACTED]"));
+        assert!(redacted.starts_with("User auth token: "));
+    }
+
+    #[test]
+    fn redact_scrubs_bot_tokens() {
+        // Telegram bot token
+        let tg = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz1234567890";
+        let r_tg = redact_text(&format!("telegram bot: {tg}"));
+        assert!(!r_tg.contains("ABCdefGHIjklMNOpqrsTUVwxyz1234567890"));
+        assert!(r_tg.contains("[REDACTED]"));
+
+        // Slack bot token
+        let slack = "xoxb-123456789012-1234567890123-abcdefghijklmnopqrstuv";
+        let r_slack = redact_text(&format!("slack auth: {slack}"));
+        assert!(!r_slack.contains("abcdefghijklmnopqrstuv"));
+        assert!(r_slack.contains("[REDACTED]"));
+
+        // GitHub token
+        let gh = "ghp_1234567890abcdefghijklmnopqrstuvwxyz";
+        let r_gh = redact_text(&format!("github: {gh}"));
+        assert!(!r_gh.contains("1234567890abcdefghijklmnopqrstuvwxyz"));
+        assert!(r_gh.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn redact_scrubs_bearer_token() {
+        let s1 = "Authorization: Bearer myCustomSecretToken12345";
+        let r1 = redact_text(s1);
+        assert_eq!(r1, "Authorization: Bearer [REDACTED]");
+
+        let s2 = "bearer secret-bearer-value";
+        let r2 = redact_text(s2);
+        assert_eq!(r2, "bearer [REDACTED]");
+
+        let s3 = "header Bearer sk-abcdefghijklmnopqrstuvwxyz123456 tail";
+        let r3 = redact_text(s3);
+        assert_eq!(r3, "header Bearer [REDACTED] tail");
     }
 
     #[test]
@@ -5088,5 +5353,20 @@ mod tests {
 
         std::env::remove_var("GROK_APP_HOME");
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn official_aux_inject_defaults_to_false() {
+        let default_settings = AppSettings::default();
+        assert!(
+            !default_settings.official_aux_inject,
+            "AppSettings::default().official_aux_inject must be false"
+        );
+        let deserialized: AppSettings =
+            serde_json::from_str(legacy_settings_json()).expect("deserialize legacy settings");
+        assert!(
+            !deserialized.official_aux_inject,
+            "serde default for official_aux_inject must be false"
+        );
     }
 }

@@ -14,6 +14,7 @@
  */
 
 import { spawn } from "node:child_process";
+import os from "node:os";
 import { createInterface } from "node:readline";
 import process from "node:process";
 
@@ -451,13 +452,20 @@ function runGrok(prompt, toolName) {
       return;
     }
     const timeoutMs = toolTimeoutMs(toolName);
+    const isYolo =
+      process.env.OFFICIAL_AUX_YOLO === "1" ||
+      process.env.OFFICIAL_AUX_YOLO === "true" ||
+      process.env.OFFICIAL_AUX_POLICY === "always_approve" ||
+      process.env.OFFICIAL_AUX_POLICY === "yolo";
     const args = [
       "--no-auto-update",
       "-p",
       prompt,
       "-m",
       MODEL,
-      "--always-approve",
+      "--no-subagents",
+      "--disallowed-tools",
+      "run_terminal_cmd,run_terminal_command,search_replace,write,Agent,spawn_subagent,bash,bash_tool",
       "--max-turns",
       toolMaxTurns(toolName),
       "--effort",
@@ -465,7 +473,11 @@ function runGrok(prompt, toolName) {
       "--output-format",
       "plain",
     ];
+    if (isYolo) {
+      args.push("--always-approve");
+    }
     const child = spawn(CLI, args, {
+      cwd: os.tmpdir(),
       env: {
         ...process.env,
         GROK_HOME: HOME,

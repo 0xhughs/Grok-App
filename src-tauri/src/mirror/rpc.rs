@@ -12,17 +12,33 @@ use crate::store;
 /// Protocol version advertised in `mirror://hello`.
 pub const PROTOCOL_VERSION: u32 = 1;
 
+/// Read-only RPC methods permitted when the host is in read-only mode.
+pub const READ_METHODS: &[&str] = &[
+    "projects.list",
+    "sessions.list",
+    "session.messages",
+    "session.getState",
+    "account.status",
+    "settings.get",
+    "models.list",
+    "composer.prefsResolve",
+    "voice.status",
+];
+
 /// Write RPC methods blocked when the host is in read-only mode.
 /// Keep in sync with `src/lib/mirrorWriteSurface.ts` (UI category list).
+#[allow(dead_code)]
 pub const WRITE_METHODS: &[&str] = &[
     "session.send",
     "session.stop",
     "session.create",
-    "session.resolvePermission",
-    "session.answerAskUser",
-    "session.reviewPlan",
-    "session.delete",
     "session.rename",
+    "session.autoTitle",
+    "session.connect",
+    "session.resolvePermission",
+    "session.resolvePlan",
+    "session.resolveAskUser",
+    "voice.transcribe",
 ];
 
 #[derive(Debug, Clone)]
@@ -70,7 +86,8 @@ pub async fn dispatch(
     mgr: Option<&Arc<SessionManager>>,
 ) -> Result<Value, RpcError> {
     // Read-only sessions can observe but not drive the agent.
-    if host.is_read_only() && WRITE_METHODS.contains(&method) {
+    // Explicit allowlist of read methods: reject everything else when read-only.
+    if host.is_read_only() && !READ_METHODS.contains(&method) {
         return Err(RpcError::unsupported("mirror is in read-only mode"));
     }
 
@@ -192,9 +209,20 @@ pub async fn dispatch(
 
         // ── Focus / connect (Slice 4) ─────────────────────────────────────
         "session.connect" => {
+            let project_path = param_string(&params, &["projectPath", "project_path"]);
+            if let Some(ref path) = project_path {
+                let trimmed = path.trim();
+                if !trimmed.is_empty() {
+                    let projects = store::load_projects();
+                    if !store::is_trusted_project_path(&projects, trimmed) {
+                        return Err(RpcError::bad_params(
+                            "projectPath must be a registered, trusted project",
+                        ));
+                    }
+                }
+            }
             let app = app.ok_or_else(RpcError::no_ctx)?.clone();
             let mgr = mgr.ok_or_else(RpcError::no_ctx)?.clone();
-            let project_path = param_string(&params, &["projectPath", "project_path"]);
             let session_id = param_string(&params, &["sessionId", "session_id"]);
             let mode = param_string(&params, &["mode"]);
             let snap = mgr
@@ -253,25 +281,54 @@ pub async fn dispatch(
 
         // ── Write path (Slice 5 / AC5) ────────────────────────────────────
         "session.send" => {
-            let app = app.ok_or_else(RpcError::no_ctx)?.clone();
-            let mgr = mgr.ok_or_else(RpcError::no_ctx)?.clone();
             let text = param_string(&params, &["text"])
                 .ok_or_else(|| RpcError::bad_params("text required"))?;
             let display_text = param_string(&params, &["displayText", "display_text"]);
             let attachments = param_attachments(&params);
-            // Connect-before-send if client names a session that is not focused.
             let target = param_string(&params, &["sessionId", "session_id"]);
-            if let Some(sid) = target.clone() {
-                let focused = mgr.snapshot().session_id;
-                if focused.as_deref() != Some(sid.as_str()) {
-                    mgr.connect(app.clone(), None, Some(sid), None, None)
-                        .await
-                        .map_err(RpcError::host)?;
+
+            let focused = mgr.and_then(|m| m.snapshot().session_id);
+            let effective_sid = target.as_deref().or(focused.as_deref());
+
+            let Some(sid) = effective_sid else {
+                if mgr.is_none() && app.is_none() && target.is_none() {
+                    return Err(RpcError::no_ctx());
                 }
-            } else if mgr.snapshot().session_id.is_none() {
                 return Err(RpcError::host(
                     "no active session — call session.connect or pass sessionId",
                 ));
+            };
+
+            // R2: When mirror.allow_remote_yolo is false, refuse turns directed to
+            // sessions whose effective permission policy is relaxed.
+            if !host.allow_remote_yolo() {
+                let prefs = store::resolve_composer_prefs(None, Some(sid));
+                let policy = crate::permission::PermissionPolicy::parse(&prefs.permission_policy);
+                if matches!(
+                    policy,
+                    crate::permission::PermissionPolicy::AlwaysApprove
+                        | crate::permission::PermissionPolicy::DontAsk
+                        | crate::permission::PermissionPolicy::Auto
+                        | crate::permission::PermissionPolicy::AcceptEdits
+                ) {
+                    return Err(RpcError::host(format!(
+                        "refusing remote send: session effective permission policy is '{}' and mirror remote YOLO is disabled",
+                        policy.as_str()
+                    )));
+                }
+            }
+
+            let app = app.ok_or_else(RpcError::no_ctx)?.clone();
+            let mgr = mgr.ok_or_else(RpcError::no_ctx)?.clone();
+
+            // Connect-before-send if client names a session that is not focused.
+            if let Some(target_id) = target.as_deref() {
+                let live_focused = mgr.snapshot().session_id;
+                if live_focused.as_deref() != Some(target_id) {
+                    mgr.connect(app.clone(), None, Some(target_id.to_string()), None, None)
+                        .await
+                        .map_err(RpcError::host)?;
+                }
             }
             // Pass the id through so Host re-focuses if another chat stole the
             // live slot between connect and send. Attachments land on the user
@@ -486,3 +543,262 @@ fn param_u64(params: &Value, keys: &[&str]) -> Option<u64> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_host(read_only: bool, allow_remote_yolo: bool) -> Arc<MirrorHost> {
+        let host = Arc::new(MirrorHost::from_env());
+        host.set_read_only(read_only);
+        host.set_allow_remote_yolo(allow_remote_yolo);
+        host
+    }
+
+    #[tokio::test]
+    async fn read_only_allowlist_permits_reads() {
+        let host = make_test_host(true, false);
+        let mgr = Arc::new(SessionManager::new());
+
+        for &method in READ_METHODS {
+            let params = match method {
+                "session.messages" => json!({ "sessionId": "dummy-session-id" }),
+                _ => json!({}),
+            };
+            let res = dispatch(method, params, &host, None, Some(&mgr)).await;
+            // None of the read methods should fail with "unsupported method: mirror is in read-only mode"
+            if let Err(e) = res {
+                assert_ne!(
+                    e.message, "unsupported method: mirror is in read-only mode",
+                    "read method {method} was blocked by read-only gate"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn read_only_blocks_all_writes() {
+        let host = make_test_host(true, false);
+        let mgr = Arc::new(SessionManager::new());
+
+        for &method in WRITE_METHODS {
+            let res = dispatch(method, json!({}), &host, None, Some(&mgr)).await;
+            let err = res.expect_err(&format!("write method {method} should be blocked in read-only"));
+            assert_eq!(err.code, "UNSUPPORTED");
+            assert_eq!(
+                err.message, "unsupported method: mirror is in read-only mode",
+                "method {method} should return read-only unsupported error"
+            );
+        }
+
+        // Also test arbitrary unknown and desktop-only methods in read-only mode
+        for arbitrary in &["unknown.method", "pick_directory", "account.login", "fs_read_file"] {
+            let res = dispatch(arbitrary, json!({}), &host, None, Some(&mgr)).await;
+            let err = res.expect_err(&format!("arbitrary method {arbitrary} should be blocked"));
+            assert_eq!(err.code, "UNSUPPORTED");
+            assert_eq!(err.message, "unsupported method: mirror is in read-only mode");
+        }
+    }
+
+    #[tokio::test]
+    async fn all_dispatch_methods_classified() {
+        // 1. Verify READ_METHODS and WRITE_METHODS are disjoint
+        for r in READ_METHODS {
+            assert!(
+                !WRITE_METHODS.contains(r),
+                "method {r} is in both READ_METHODS and WRITE_METHODS"
+            );
+        }
+        for w in WRITE_METHODS {
+            assert!(
+                !READ_METHODS.contains(w),
+                "method {w} is in both WRITE_METHODS and READ_METHODS"
+            );
+        }
+
+        // 2. Verify all known active functional dispatch methods are classified in either READ or WRITE
+        let all_active_methods = [
+            "projects.list",
+            "sessions.list",
+            "session.messages",
+            "session.getState",
+            "account.status",
+            "settings.get",
+            "models.list",
+            "composer.prefsResolve",
+            "voice.status",
+            "voice.transcribe",
+            "session.connect",
+            "session.create",
+            "session.rename",
+            "session.autoTitle",
+            "session.send",
+            "session.stop",
+            "session.resolvePermission",
+            "session.resolvePlan",
+            "session.resolveAskUser",
+        ];
+
+        for m in all_active_methods {
+            let classified = READ_METHODS.contains(&m) || WRITE_METHODS.contains(&m);
+            assert!(classified, "active dispatch method {m} must be classified");
+        }
+        assert_eq!(READ_METHODS.len() + WRITE_METHODS.len(), all_active_methods.len());
+
+        // 3. When read_only is false, write methods must not fail with read-only unsupported error
+        let host_rw = make_test_host(false, false);
+        for &w in WRITE_METHODS {
+            let res = dispatch(w, json!({}), &host_rw, None, None).await;
+            if let Err(e) = res {
+                assert_ne!(
+                    e.message, "unsupported method: mirror is in read-only mode",
+                    "write method {w} should not be blocked by read-only gate when read_only=false"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn allow_remote_yolo_enforcement() {
+        let _ = crate::paths::ensure_app_dirs();
+
+        // Create a test session
+        let mut session = store::create_session(None, Some("test-remote-yolo".into()), false)
+            .expect("create test session");
+
+        // 1. When session policy is ask and allow_remote_yolo is false: permitted past policy check
+        session.permission_policy = Some("ask".into());
+        store::update_session_meta(&session).expect("update meta");
+
+        let host_no_yolo = make_test_host(false, false);
+        let res = dispatch(
+            "session.send",
+            json!({ "sessionId": session.id, "text": "hello" }),
+            &host_no_yolo,
+            None,
+            None,
+        )
+        .await;
+        // Permitted past policy check, then fails on missing app/mgr context (NOT_READY)
+        let err = res.expect_err("should fail on missing ctx, not policy");
+        assert_eq!(err.code, "NOT_READY");
+
+        // 2. When session policy is relaxed and allow_remote_yolo is false: refused
+        for relaxed in &["always_approve", "dont_ask", "auto", "accept_edits"] {
+            session.permission_policy = Some((*relaxed).into());
+            store::update_session_meta(&session).expect("update meta");
+
+            let res = dispatch(
+                "session.send",
+                json!({ "sessionId": session.id, "text": "hello" }),
+                &host_no_yolo,
+                None,
+                None,
+            )
+            .await;
+            let err = res.expect_err(&format!("policy {relaxed} must be refused when allow_remote_yolo is false"));
+            assert_eq!(err.code, "HOST_ERROR");
+            assert!(
+                err.message.contains("refusing remote send"),
+                "error message should explain refusal: {}",
+                err.message
+            );
+            assert!(
+                err.message.contains(relaxed),
+                "error message should cite policy {}: {}",
+                relaxed,
+                err.message
+            );
+            assert!(
+                err.message.contains("mirror remote YOLO is disabled"),
+                "error message should cite remote YOLO disabled: {}",
+                err.message
+            );
+        }
+
+        // 3. When session policy is relaxed and allow_remote_yolo is true: permitted past policy check
+        let host_yolo = make_test_host(false, true);
+        for relaxed in &["always_approve", "dont_ask", "auto", "accept_edits"] {
+            session.permission_policy = Some((*relaxed).into());
+            store::update_session_meta(&session).expect("update meta");
+
+            let res = dispatch(
+                "session.send",
+                json!({ "sessionId": session.id, "text": "hello" }),
+                &host_yolo,
+                None,
+                None,
+            )
+            .await;
+            let err = res.expect_err("should pass policy check and fail on missing ctx");
+            assert_eq!(
+                err.code, "NOT_READY",
+                "relaxed policy {relaxed} must be permitted past policy check when allow_remote_yolo is true"
+            );
+        }
+
+        // Clean up
+        let _ = store::delete_session(&session.id);
+    }
+
+    #[tokio::test]
+    async fn session_connect_rejects_untrusted_and_unregistered_project_path() {
+        let host = make_test_host(false, false);
+        let mgr = Arc::new(SessionManager::new());
+
+        // 1. Non-registered path
+        let res = dispatch(
+            "session.connect",
+            json!({ "projectPath": "/unregistered/arbitrary/path/xyz" }),
+            &host,
+            None,
+            Some(&mgr),
+        )
+        .await;
+        let err = res.expect_err("non-registered project path should be rejected");
+        assert_eq!(err.code, "BAD_PARAMS");
+        assert_eq!(err.message, "projectPath must be a registered, trusted project");
+
+        // 2. Registered untrusted project path
+        let mut list = store::load_projects();
+        let untrusted_path = "/tmp/test-untrusted-proj-xyz";
+        let untrusted_proj = store::Project {
+            id: "test-untrusted-id-123".into(),
+            name: "untrusted-test".into(),
+            path: untrusted_path.into(),
+            trusted: false,
+            last_opened_at: chrono::Utc::now(),
+            path_ok: true,
+            pinned: false,
+            system: false,
+            model_id: None,
+            effort: None,
+            mode: None,
+            permission_policy: None,
+            sandbox_profile: None,
+            color: None,
+            ssh_alias: None,
+        };
+        list.push(untrusted_proj);
+        let _ = store::save_projects(&list);
+
+        let res2 = dispatch(
+            "session.connect",
+            json!({ "projectPath": untrusted_path }),
+            &host,
+            None,
+            Some(&mgr),
+        )
+        .await;
+        let err2 = res2.expect_err("registered untrusted project path should be rejected");
+        assert_eq!(err2.code, "BAD_PARAMS");
+        assert_eq!(err2.message, "projectPath must be a registered, trusted project");
+
+        // Clean up project
+        let mut clean_list = store::load_projects();
+        clean_list.retain(|p| p.id != "test-untrusted-id-123");
+        let _ = store::save_projects(&clean_list);
+    }
+}
+
+

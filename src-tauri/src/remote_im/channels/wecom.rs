@@ -205,8 +205,8 @@ fn wecom_timestamp_fresh(timestamp: &str, now_unix: i64) -> bool {
 }
 
 /// WeCom signature must match **and** the timestamp must be fresh.
-/// The shared-token header is a non-WeCom fallback and does not carry a
-/// Tencent timestamp — it still authenticates without the replay window.
+/// The shared-token header is a non-WeCom fallback and is only accepted if
+/// `allow_shared_token` is explicitly enabled.
 fn wecom_callback_authorized(
     token: &str,
     timestamp: &str,
@@ -214,9 +214,12 @@ fn wecom_callback_authorized(
     payload: &str,
     signature: Option<&str>,
     header_token: Option<&str>,
+    allow_shared_token: bool,
     now_unix: i64,
 ) -> bool {
-    if header_token.is_some_and(|t| const_time_eq(t.as_bytes(), token.as_bytes())) {
+    if allow_shared_token
+        && header_token.is_some_and(|t| const_time_eq(t.as_bytes(), token.as_bytes()))
+    {
         return true;
     }
     wecom_signature_ok(token, timestamp, nonce, payload, signature)
@@ -310,6 +313,12 @@ async fn run_webhook(
         .or_else(|| inst.options.get("allowExternal"))
         .and_then(|x| x.as_bool())
         .unwrap_or(false);
+    let allow_shared_token = inst
+        .options
+        .get("allow_shared_token")
+        .or_else(|| inst.options.get("allowSharedToken"))
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false);
     let bind_ip = if allow_external {
         [0, 0, 0, 0]
     } else {
@@ -321,6 +330,7 @@ async fn run_webhook(
         port,
         %path,
         allow_external,
+        allow_shared_token,
         "wecom webhook server starting"
     );
 
@@ -422,6 +432,7 @@ async fn run_webhook(
                         payload_for_sig,
                         sig.as_deref(),
                         header_token.as_deref(),
+                        allow_shared_token,
                         now,
                     );
 
@@ -668,6 +679,7 @@ mod tests {
             payload,
             Some(&sig_fresh),
             None,
+            false,
             now
         ));
         assert!(!wecom_callback_authorized(
@@ -677,6 +689,7 @@ mod tests {
             payload,
             Some(&sig_expired),
             None,
+            false,
             now
         ));
         assert!(!wecom_callback_authorized(
@@ -686,9 +699,21 @@ mod tests {
             payload,
             Some(&sig_future),
             None,
+            false,
             now
         ));
-        // Shared-token header still authenticates without a WeCom timestamp.
+        // Shared-token header rejected by default (allow_shared_token = false)
+        assert!(!wecom_callback_authorized(
+            token,
+            &expired,
+            nonce,
+            payload,
+            None,
+            Some(token),
+            false,
+            now
+        ));
+        // Shared-token header accepted only when allow_shared_token = true
         assert!(wecom_callback_authorized(
             token,
             &expired,
@@ -696,6 +721,60 @@ mod tests {
             payload,
             None,
             Some(token),
+            true,
+            now
+        ));
+        // Shared-token mismatch rejected even when allow_shared_token = true
+        assert!(!wecom_callback_authorized(
+            token,
+            &expired,
+            nonce,
+            payload,
+            None,
+            Some("wrong-token"),
+            true,
+            now
+        ));
+    }
+
+    #[test]
+    fn shared_token_fallback_rejected_by_default_and_accepted_when_opted_in() {
+        let now = 1_700_000_000i64;
+        let token = "test-token";
+
+        // Missing signature + shared token with allow_shared_token=false -> false
+        assert!(!wecom_callback_authorized(
+            token,
+            "1700000000",
+            "nonce",
+            "body",
+            None,
+            Some(token),
+            false,
+            now
+        ));
+
+        // Missing signature + shared token with allow_shared_token=true -> true
+        assert!(wecom_callback_authorized(
+            token,
+            "1700000000",
+            "nonce",
+            "body",
+            None,
+            Some(token),
+            true,
+            now
+        ));
+
+        // Missing signature and missing shared token -> false regardless
+        assert!(!wecom_callback_authorized(
+            token,
+            "1700000000",
+            "nonce",
+            "body",
+            None,
+            None,
+            true,
             now
         ));
     }

@@ -112,7 +112,7 @@ export interface AppConfig {
 export const DEFAULT_GROK_CONFIG = (): GrokConfig => ({
   work_dir: process.cwd(),
   command: "grok",
-  mode: "yolo",
+  mode: "default",
   profile: "auto",
   session_backend: "acp",
   max_turns: 12,

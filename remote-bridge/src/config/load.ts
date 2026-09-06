@@ -42,7 +42,7 @@ function parsePlatform(v: unknown): PlatformBrand {
 }
 
 function parseMode(v: unknown): GrokMode {
-  const s = asString(v, "yolo");
+  const s = asString(v, "default");
   const allowed: GrokMode[] = [
     "yolo",
     "bypassPermissions",
@@ -51,7 +51,7 @@ function parseMode(v: unknown): GrokMode {
     "plan",
     "dontAsk",
   ];
-  return (allowed.includes(s as GrokMode) ? s : "yolo") as GrokMode;
+  return (allowed.includes(s as GrokMode) ? s : "default") as GrokMode;
 }
 
 function parseFeishu(raw: Record<string, unknown> | undefined): FeishuConfig {
@@ -262,7 +262,7 @@ function parseProject(raw: Record<string, unknown>, index: number): ProjectConfi
   // ACL: project-level wins; else first remaining platform binding
   const allow_from = asString(
     raw.allow_from ?? platforms?.[0]?.allow_from,
-    "*",
+    "",
   );
   const allow_chat =
     asString(raw.allow_chat ?? platforms?.[0]?.allow_chat) || undefined;

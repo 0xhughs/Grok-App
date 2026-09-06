@@ -4,6 +4,7 @@
 
 | Version | Supported |
 |---------|-----------|
+| 0.2.x   | Yes       |
 | 0.1.x   | Yes       |
 
 ## Reporting a Vulnerability
@@ -23,12 +24,12 @@ Do **not** open a public issue for sensitive vulnerabilities until a fix is avai
 
 ## Local security notes
 
-- **API keys** (`officialApiKey`, `relayApiKey`) prefer the **OS secret store**:
+- **API keys** (`officialApiKey`, `relayApiKey`) prefer the **OS secret store** and are enabled by default where supported:
   - macOS: Keychain
   - Windows: Credential Manager
   - Linux: FreeDesktop Secret Service (when available)
-  - Fallback: `secrets.json` under the app data root with mode `0600` when the OS store is unavailable
-- Non-secret metadata (`relayBaseUrl`, `defaultModel`) may remain in `secrets.json`. On first load after upgrade, any plaintext keys still on disk are **migrated into the OS store** and cleared from the file (logged without values).
+  - Fallback: `secrets.json` under the app data root with mode `0600` when the OS store is unavailable or if keychain operations fail (preventing data loss)
+- Non-secret metadata (`relayBaseUrl`, `defaultModel`) may remain in `secrets.json`. On first load after upgrade or when keychain is preferred, any plaintext keys still on disk are **migrated into the OS store** and cleared from the file (logged without values).
 - Custom provider keys may also be written to the independent agent home (`agent-home/config.toml`); they are **not** moved into the OS keychain by this path — do not commit them.
 - Prefer official Grok login / local CLI auth over pasting long-lived keys into chats.
 - Automations and YOLO permission mode can run agent actions without per-step prompts — enable only if you trust the session.

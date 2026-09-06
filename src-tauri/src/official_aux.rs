@@ -211,6 +211,30 @@ pub fn status() -> OfficialAuxStatus {
     }
 }
 
+/// Build command args for official aux headless process.
+pub fn build_official_aux_args(prompt: &str, max_turns: u32, is_yolo: bool) -> Vec<String> {
+    let mut args = vec![
+        "--no-auto-update".into(),
+        "-p".into(),
+        prompt.to_string(),
+        "-m".into(),
+        OFFICIAL_CATALOG_MODEL.into(),
+        "--no-subagents".into(),
+        "--disallowed-tools".into(),
+        "run_terminal_cmd,run_terminal_command,search_replace,write,Agent,spawn_subagent,bash,bash_tool".into(),
+        "--max-turns".into(),
+        max_turns.clamp(1, 32).to_string(),
+        "--effort".into(),
+        "low".into(),
+        "--output-format".into(),
+        "plain".into(),
+    ];
+    if is_yolo {
+        args.push("--always-approve".into());
+    }
+    args
+}
+
 /// Fallback: `GROK_HOME=agent-home-official grok -p -m grok-4.5 …`
 /// Prefer [`run_official_acp_job`] for Host pre-run (stream bridge).
 pub fn run_official_headless(
@@ -236,19 +260,19 @@ pub fn run_official_headless(
         .filter(|p| !p.trim().is_empty())
         .ok_or_else(|| "grok CLI not found".to_string())?;
 
+    let is_yolo = matches!(
+        crate::permission::effective_permission_policy(
+            &settings.permission_policy,
+            None,
+            None,
+            None,
+        ),
+        crate::permission::PermissionPolicy::AlwaysApprove
+    );
+
     let mut cmd = Command::new(&cli);
-    cmd.arg("--no-auto-update")
-        .arg("-p")
-        .arg(prompt)
-        .arg("-m")
-        .arg(OFFICIAL_CATALOG_MODEL)
-        .arg("--always-approve")
-        .arg("--max-turns")
-        .arg(max_turns.clamp(1, 32).to_string())
-        .arg("--effort")
-        .arg("low")
-        .arg("--output-format")
-        .arg("plain");
+    cmd.args(build_official_aux_args(prompt, max_turns, is_yolo));
+    cmd.current_dir(std::env::temp_dir());
     cmd.env("GROK_HOME", &home);
     // Official profile only — do not leak these into the DeepSeek agent process.
     cmd.env("GROK_WEB_SEARCH_MODEL", OFFICIAL_CATALOG_MODEL);
@@ -395,14 +419,26 @@ async fn run_official_acp_job_inner(
         .ok_or_else(|| "grok CLI not found".to_string())?;
     let cli_path = PathBuf::from(cli);
 
-    // Use official home as cwd so @image absolute paths still work; home is
-    // the isolated profile only for GROK_HOME env.
-    let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
+    let cwd = std::env::temp_dir();
+
+    let is_yolo = matches!(
+        crate::permission::effective_permission_policy(
+            &settings.permission_policy,
+            None,
+            None,
+            None,
+        ),
+        crate::permission::PermissionPolicy::AlwaysApprove
+    );
 
     let opts = SpawnOptions {
         model_id: Some(OFFICIAL_CATALOG_MODEL.into()),
         effort: Some("low".into()),
-        permission_policy: Some("always_approve".into()),
+        permission_policy: if is_yolo {
+            Some("always_approve".into())
+        } else {
+            Some("ask".into())
+        },
         product_mode: Some("agent".into()),
         sandbox_profile: Some("off".into()),
         json_schema: None,
@@ -1168,6 +1204,15 @@ pub fn mcp_server_acp_entry_reason() -> (Option<serde_json::Value>, &'static str
 
     // Prefer node; fall back to `grok` not applicable for MCP protocol.
     let node = which_node().unwrap_or_else(|| "node".into());
+    let is_yolo = matches!(
+        crate::permission::effective_permission_policy(
+            &settings.permission_policy,
+            None,
+            None,
+            None,
+        ),
+        crate::permission::PermissionPolicy::AlwaysApprove
+    );
 
     (
         Some(serde_json::json!({
@@ -1179,6 +1224,7 @@ pub fn mcp_server_acp_entry_reason() -> (Option<serde_json::Value>, &'static str
                 {"name": "OFFICIAL_AUX_MODEL", "value": OFFICIAL_CATALOG_MODEL},
                 {"name": "OFFICIAL_AUX_CLI", "value": cli},
                 {"name": "GROK_HOME", "value": home.display().to_string()},
+                {"name": "OFFICIAL_AUX_YOLO", "value": if is_yolo { "1" } else { "0" }},
             ]
         })),
         "ok",
@@ -2527,5 +2573,23 @@ A UI screenshot.
         assert!(!out.contains("api_key"));
         assert!(out.contains("model = \"grok-4.5\""));
         assert!(out.contains("name = \"Grok\""));
+    }
+
+    #[test]
+    fn official_aux_args_restricted_and_conditional_always_approve() {
+        let ask_args = build_official_aux_args("test prompt", 4, false);
+        assert!(ask_args.contains(&"--no-subagents".into()));
+        assert!(ask_args.contains(&"--disallowed-tools".into()));
+        assert!(!ask_args.contains(&"--always-approve".into()));
+        let dt_idx = ask_args.iter().position(|x| x == "--disallowed-tools").unwrap();
+        let dt_val = &ask_args[dt_idx + 1];
+        assert!(dt_val.contains("run_terminal_cmd"));
+        assert!(dt_val.contains("write"));
+        assert!(dt_val.contains("Agent"));
+
+        let yolo_args = build_official_aux_args("test prompt", 4, true);
+        assert!(yolo_args.contains(&"--no-subagents".into()));
+        assert!(yolo_args.contains(&"--disallowed-tools".into()));
+        assert!(yolo_args.contains(&"--always-approve".into()));
     }
 }

@@ -54,12 +54,14 @@ mod tests {
         let cli = build_connection_cli("127.0.0.1:2419", "tokensecret99");
         assert_eq!(
             cli,
-            "grok --remote ws://127.0.0.1:2419/ws --secret tokensecret99"
+            "GROK_SERVE_SECRET=tokensecret99 grok --remote ws://127.0.0.1:2419/ws"
         );
         let masked = build_connection_cli_masked("127.0.0.1:2419", "tokensecret99");
         assert!(masked.contains("••••et99"));
         assert!(!masked.contains("tokensecret99"));
-        assert!(masked.starts_with("grok --remote ws://127.0.0.1:2419/ws --secret "));
+        assert!(masked.starts_with("GROK_SERVE_SECRET="));
+        assert!(!masked.contains("--secret"));
+        assert!(!cli.contains("--secret"));
         assert_eq!(build_remote_ws_base("127.0.0.1:2419"), "ws://127.0.0.1:2419/ws");
     }
 
@@ -160,6 +162,8 @@ Options:
             cli_found: true,
             cli_supports_serve: true,
             cli_supports_remote: true,
+            non_loopback: false,
+            exposure_warning: None,
             message: None,
         };
         let v = serde_json::to_value(&dto).unwrap();
@@ -181,5 +185,50 @@ Options:
         assert!(normalize_probe_addr("127.0.0.1:2419/ws").is_err());
         assert!(normalize_probe_addr("127.0.0.1:2419?server-key=abc").is_err());
         assert!(normalize_probe_addr("host with space:1").is_err());
+    }
+
+    #[test]
+    fn normalize_bind_detects_non_loopback() {
+        assert!(!is_non_loopback_bind("127.0.0.1:2419"));
+        assert!(!is_non_loopback_bind("localhost:2419"));
+        assert!(!is_non_loopback_bind("[::1]:2419"));
+
+        assert!(is_non_loopback_bind("0.0.0.0:2419"));
+        assert!(is_non_loopback_bind("192.168.1.1:2419"));
+        assert!(is_non_loopback_bind("10.0.0.5:2419"));
+
+        // normalize_bind succeeds on valid non-loopback addresses while triggering security logging
+        let res = normalize_bind(Some("0.0.0.0:2419"));
+        assert_eq!(res.unwrap(), "0.0.0.0:2419");
+    }
+
+    #[test]
+    fn spawn_serve_process_passes_secret_via_env() {
+        let cmd = build_serve_command(
+            Path::new("/bin/grok"),
+            "127.0.0.1:2419",
+            "sekrit-token-123",
+            Some("ws://upstream:9000/ws"),
+        );
+        let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        // argv must NOT contain --secret or the token
+        assert!(!args.contains(&"--secret".to_string()));
+        assert!(!args.contains(&"sekrit-token-123".to_string()));
+        assert!(args.contains(&"agent".to_string()));
+        assert!(args.contains(&"serve".to_string()));
+        assert!(args.contains(&"--bind".to_string()));
+        assert!(args.contains(&"127.0.0.1:2419".to_string()));
+        assert!(args.contains(&"--remote".to_string()));
+        assert!(args.contains(&"ws://upstream:9000/ws".to_string()));
+
+        // env must contain GROK_SERVE_SECRET=sekrit-token-123
+        let envs: std::collections::HashMap<String, Option<String>> = cmd
+            .get_envs()
+            .map(|(k, v)| (k.to_string_lossy().to_string(), v.map(|v| v.to_string_lossy().to_string())))
+            .collect();
+        assert_eq!(
+            envs.get("GROK_SERVE_SECRET"),
+            Some(&Some("sekrit-token-123".to_string()))
+        );
     }
 }

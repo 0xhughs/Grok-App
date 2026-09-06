@@ -859,6 +859,35 @@ pub fn aux_model_spawn_env() -> Vec<(String, String)> {
     out
 }
 
+/// Build command args for aux headless process.
+pub fn build_models_aux_args(
+    prompt: &str,
+    model_id: &str,
+    max_turns: u32,
+    is_yolo: bool,
+) -> Vec<String> {
+    let mut args = vec![
+        "--no-auto-update".into(),
+        "-p".into(),
+        prompt.to_string(),
+        "-m".into(),
+        model_id.to_string(),
+        "--no-subagents".into(),
+        "--disallowed-tools".into(),
+        "run_terminal_cmd,run_terminal_command,search_replace,write,Agent,spawn_subagent,bash,bash_tool".into(),
+        "--max-turns".into(),
+        max_turns.clamp(1, 24).to_string(),
+        "--effort".into(),
+        "low".into(),
+        "--output-format".into(),
+        "plain".into(),
+    ];
+    if is_yolo {
+        args.push("--always-approve".into());
+    }
+    args
+}
+
 /// Run a one-shot `grok -p` under App agent-home with an explicit model section
 /// id (e.g. `amux`, `yun-api`, `grok-4.5`). Independent of the interactive
 /// session's main model — Hermes-style side-channel.
@@ -893,19 +922,19 @@ pub fn run_aux_headless(
         .filter(|p| !p.trim().is_empty())
         .ok_or_else(|| "grok CLI not found".to_string())?;
 
+    let is_yolo = matches!(
+        crate::permission::effective_permission_policy(
+            &settings.permission_policy,
+            None,
+            None,
+            None,
+        ),
+        crate::permission::PermissionPolicy::AlwaysApprove
+    );
+
     let mut cmd = Command::new(&cli);
-    cmd.arg("--no-auto-update")
-        .arg("-p")
-        .arg(prompt)
-        .arg("-m")
-        .arg(model_id)
-        .arg("--always-approve")
-        .arg("--max-turns")
-        .arg(max_turns.clamp(1, 24).to_string())
-        .arg("--effort")
-        .arg("low")
-        .arg("--output-format")
-        .arg("plain");
+    cmd.args(build_models_aux_args(prompt, model_id, max_turns, is_yolo));
+    cmd.current_dir(std::env::temp_dir());
     cmd.env("GROK_HOME", &grok_home);
     crate::process_util::apply_no_window_std(&mut cmd);
     if let Some(path_env) = crate::process_util::enriched_path_env() {
@@ -1859,5 +1888,23 @@ A red button.
         assert_eq!(t.as_deref(), Some("amux"));
         assert!(label.unwrap().contains("Amux"));
         assert_eq!(r, "custom_multimodal");
+    }
+
+    #[test]
+    fn models_aux_args_restricted_and_conditional_always_approve() {
+        let ask_args = build_models_aux_args("test prompt", "grok-4.5", 4, false);
+        assert!(ask_args.contains(&"--no-subagents".into()));
+        assert!(ask_args.contains(&"--disallowed-tools".into()));
+        assert!(!ask_args.contains(&"--always-approve".into()));
+        let dt_idx = ask_args.iter().position(|x| x == "--disallowed-tools").unwrap();
+        let dt_val = &ask_args[dt_idx + 1];
+        assert!(dt_val.contains("run_terminal_cmd"));
+        assert!(dt_val.contains("write"));
+        assert!(dt_val.contains("Agent"));
+
+        let yolo_args = build_models_aux_args("test prompt", "grok-4.5", 4, true);
+        assert!(yolo_args.contains(&"--no-subagents".into()));
+        assert!(yolo_args.contains(&"--disallowed-tools".into()));
+        assert!(yolo_args.contains(&"--always-approve".into()));
     }
 }

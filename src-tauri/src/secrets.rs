@@ -91,12 +91,12 @@ fn probe_keychain() -> bool {
 }
 
 /// Soft probe once and cache. Never logs secret values.
-fn keychain_platform_ok() -> bool {
+pub fn keychain_platform_ok() -> bool {
     *KEYCHAIN_USABLE.get_or_init(probe_keychain)
 }
 
-/// User opted into OS keychain via settings (default false → file).
-fn prefer_keychain_storage() -> bool {
+/// User opted into OS keychain via settings (default is probe-backed).
+pub fn prefer_keychain_storage() -> bool {
     crate::store::load_settings().store_api_keys_in_keychain
 }
 
@@ -518,6 +518,7 @@ pub fn load_secrets() -> SecretsFile {
 }
 
 /// Save secrets. Keychain only when the user setting is on and the platform works.
+/// Falls back gracefully to private file storage on keychain error to prevent data loss.
 pub fn save_secrets(s: &SecretsFile) -> Result<(), String> {
     let _ = ensure_app_dirs();
     let path = secrets_file();
@@ -529,91 +530,135 @@ pub fn save_secrets(s: &SecretsFile) -> Result<(), String> {
 
     if use_keychain_backend() {
         let mut disk = strip_keys_for_disk(&s);
+        let mut keychain_failed = false;
 
         match &s.official_api_key {
             Some(k) if !k.is_empty() => {
-                keychain_set(KEY_OFFICIAL, k)?;
-                disk.keychain_has_official = true;
+                if let Err(e) = keychain_set(KEY_OFFICIAL, k) {
+                    tracing::warn!(
+                        target: "grok_app::secrets",
+                        error = %e,
+                        "failed to write official key to keychain; falling back to private file storage"
+                    );
+                    keychain_failed = true;
+                } else {
+                    disk.keychain_has_official = true;
+                }
             }
             _ => {
                 if s.keychain_has_official || non_empty(&s.official_api_key) {
-                    keychain_delete(KEY_OFFICIAL)?;
+                    let _ = keychain_delete(KEY_OFFICIAL);
                 }
                 disk.keychain_has_official = false;
             }
         }
-        match &s.relay_api_key {
-            Some(k) if !k.is_empty() => {
-                keychain_set(KEY_RELAY, k)?;
-                disk.keychain_has_relay = true;
-            }
-            _ => {
-                if s.keychain_has_relay || non_empty(&s.relay_api_key) {
-                    keychain_delete(KEY_RELAY)?;
+
+        if !keychain_failed {
+            match &s.relay_api_key {
+                Some(k) if !k.is_empty() => {
+                    if let Err(e) = keychain_set(KEY_RELAY, k) {
+                        tracing::warn!(
+                            target: "grok_app::secrets",
+                            error = %e,
+                            "failed to write relay key to keychain; falling back to private file storage"
+                        );
+                        keychain_failed = true;
+                    } else {
+                        disk.keychain_has_relay = true;
+                    }
                 }
-                disk.keychain_has_relay = false;
-            }
-        }
-        match &s.stt_custom_api_keys {
-            m if !m.values().any(|k| !k.is_empty()) => {
-                if s.keychain_has_stt_custom || stt_keys_non_empty(&s) {
-                    keychain_delete(KEY_STT_CUSTOM)?;
+                _ => {
+                    if s.keychain_has_relay || non_empty(&s.relay_api_key) {
+                        let _ = keychain_delete(KEY_RELAY);
+                    }
+                    disk.keychain_has_relay = false;
                 }
-                disk.keychain_has_stt_custom = false;
-            }
-            m => {
-                let json = serde_json::to_string(m).map_err(|e| e.to_string())?;
-                keychain_set(KEY_STT_CUSTOM, &json)?;
-                disk.keychain_has_stt_custom = true;
             }
         }
 
-        write_disk_secrets(&path, &disk)?;
-        let cached = SecretsFile {
-            official_api_key: s.official_api_key.clone(),
-            relay_api_key: s.relay_api_key.clone(),
-            stt_custom_api_key: None,
-            stt_custom_api_keys: s.stt_custom_api_keys.clone(),
-            stt_custom_key_presence: disk.stt_custom_key_presence.clone(),
-            relay_base_url: disk.relay_base_url.clone(),
-            default_model: disk.default_model.clone(),
-            keychain_has_official: disk.keychain_has_official,
-            keychain_has_relay: disk.keychain_has_relay,
-            keychain_has_stt_custom: disk.keychain_has_stt_custom,
-        };
-        *SESSION_CACHE.lock() = Some(cached);
-        Ok(())
-    } else {
-        // File mode: write full payload; drop any leftover keychain entries best-effort.
-        let mut file = s.clone();
-        sync_stt_presence(&mut file);
-        migrate_legacy_stt_key(&mut file);
-        if file.keychain_has_official || file.keychain_has_relay || file.keychain_has_stt_custom {
-            // Pull values if caller only had flags (shouldn't happen after load).
-            if !non_empty(&file.official_api_key) && file.keychain_has_official {
-                file.official_api_key = keychain_get(KEY_OFFICIAL);
-            }
-            if !non_empty(&file.relay_api_key) && file.keychain_has_relay {
-                file.relay_api_key = keychain_get(KEY_RELAY);
-            }
-            if file.stt_custom_api_keys.is_empty() && file.keychain_has_stt_custom {
-                file.stt_custom_api_keys = keychain_get(KEY_STT_CUSTOM)
-                    .and_then(|json| serde_json::from_str(&json).ok())
-                    .unwrap_or_default();
-            }
-            if keychain_platform_ok() {
-                let _ = keychain_delete(KEY_OFFICIAL);
-                let _ = keychain_delete(KEY_RELAY);
-                let _ = keychain_delete(KEY_STT_CUSTOM);
+        if !keychain_failed {
+            match &s.stt_custom_api_keys {
+                m if !m.values().any(|k| !k.is_empty()) => {
+                    if s.keychain_has_stt_custom || stt_keys_non_empty(&s) {
+                        let _ = keychain_delete(KEY_STT_CUSTOM);
+                    }
+                    disk.keychain_has_stt_custom = false;
+                }
+                m => {
+                    match serde_json::to_string(m) {
+                        Ok(json) => {
+                            if let Err(e) = keychain_set(KEY_STT_CUSTOM, &json) {
+                                tracing::warn!(
+                                    target: "grok_app::secrets",
+                                    error = %e,
+                                    "failed to write custom STT keys to keychain; falling back to private file storage"
+                                );
+                                keychain_failed = true;
+                            } else {
+                                disk.keychain_has_stt_custom = true;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "grok_app::secrets",
+                                error = %e,
+                                "failed to serialize custom STT keys; falling back to private file storage"
+                            );
+                            keychain_failed = true;
+                        }
+                    }
+                }
             }
         }
-        file.keychain_has_official = false;
-        file.keychain_has_relay = false;
-        file.keychain_has_stt_custom = false;
-        write_disk_secrets(&path, &file)?;
-        *SESSION_CACHE.lock() = Some(file);
-        Ok(())
+
+        if !keychain_failed {
+            write_disk_secrets(&path, &disk)?;
+            let cached = SecretsFile {
+                official_api_key: s.official_api_key.clone(),
+                relay_api_key: s.relay_api_key.clone(),
+                stt_custom_api_key: None,
+                stt_custom_api_keys: s.stt_custom_api_keys.clone(),
+                stt_custom_key_presence: disk.stt_custom_key_presence.clone(),
+                relay_base_url: disk.relay_base_url.clone(),
+                default_model: disk.default_model.clone(),
+                keychain_has_official: disk.keychain_has_official,
+                keychain_has_relay: disk.keychain_has_relay,
+                keychain_has_stt_custom: disk.keychain_has_stt_custom,
+            };
+            *SESSION_CACHE.lock() = Some(cached);
+            return Ok(());
+        }
     }
+
+    // File mode (or keychain fallback): write full payload with private file permissions.
+    let mut file = s.clone();
+    sync_stt_presence(&mut file);
+    migrate_legacy_stt_key(&mut file);
+    if file.keychain_has_official || file.keychain_has_relay || file.keychain_has_stt_custom {
+        // Pull values if caller only had flags (shouldn't happen after load).
+        if !non_empty(&file.official_api_key) && file.keychain_has_official {
+            file.official_api_key = keychain_get(KEY_OFFICIAL);
+        }
+        if !non_empty(&file.relay_api_key) && file.keychain_has_relay {
+            file.relay_api_key = keychain_get(KEY_RELAY);
+        }
+        if file.stt_custom_api_keys.is_empty() && file.keychain_has_stt_custom {
+            file.stt_custom_api_keys = keychain_get(KEY_STT_CUSTOM)
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or_default();
+        }
+        if keychain_platform_ok() {
+            let _ = keychain_delete(KEY_OFFICIAL);
+            let _ = keychain_delete(KEY_RELAY);
+            let _ = keychain_delete(KEY_STT_CUSTOM);
+        }
+    }
+    file.keychain_has_official = false;
+    file.keychain_has_relay = false;
+    file.keychain_has_stt_custom = false;
+    write_disk_secrets(&path, &file)?;
+    *SESSION_CACHE.lock() = Some(file);
+    Ok(())
 }
 
 /// Backend according to **user setting** (not a live probe). Safe for cold-start UI.
@@ -1039,9 +1084,9 @@ mod tests {
     }
 
     #[test]
-    fn default_settings_prefer_file_not_keychain() {
+    fn default_settings_prefer_keychain_when_probe_ok() {
         let s = crate::store::AppSettings::default();
-        assert!(!s.store_api_keys_in_keychain);
+        assert_eq!(s.store_api_keys_in_keychain, keychain_platform_ok());
     }
 
     #[test]
@@ -1124,5 +1169,34 @@ mod tests {
         assert!(p.get("groq").copied().unwrap_or(false));
         assert!(!p.get("openai").copied().unwrap_or(true));
         assert!(p.get("custom").copied().unwrap_or(false)); // legacy folded presence
+    }
+
+    #[test]
+    fn fresh_settings_default_to_keychain_platform_ok() {
+        let s = crate::store::AppSettings::default();
+        assert_eq!(s.store_api_keys_in_keychain, keychain_platform_ok());
+    }
+
+    #[test]
+    fn save_secrets_fallback_to_private_file() {
+        let tmp = std::env::temp_dir().join(format!("grok-secrets-fallback-{}", std::process::id()));
+        let _ = fs::create_dir_all(&tmp);
+        let path = tmp.join("secrets.json");
+        let s = SecretsFile {
+            official_api_key: Some("fallback-official-key".into()),
+            relay_api_key: Some("fallback-relay-key".into()),
+            ..Default::default()
+        };
+        assert!(write_disk_secrets(&path, &s).is_ok());
+        let read_back = read_disk_secrets(&path);
+        assert_eq!(read_back.official_api_key.as_deref(), Some("fallback-official-key"));
+        assert_eq!(read_back.relay_api_key.as_deref(), Some("fallback-relay-key"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = fs::metadata(&path).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        }
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

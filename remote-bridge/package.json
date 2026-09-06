@@ -11,6 +11,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
+    "test": "npm run build && node --test dist/r4.test.js",
     "typecheck": "tsc -p tsconfig.build.json --noEmit"
   },
   "engines": {

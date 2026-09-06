@@ -41,6 +41,10 @@ export type MirrorStatus = {
   allowLan?: boolean;
   /** Token URL using the detected LAN IPv4. Null when LAN is off or undetected. */
   lanUrl?: string | null;
+  /** When true, remote turns can be sent to relaxed-policy sessions. Default false. */
+  allowRemoteYolo?: boolean;
+  /** When true, mirror publishes a public internet tunnel via Cloudflare. Default false. */
+  publishTunnel?: boolean;
 };
 
 /** Desktop host status for Connect panel. Not available on phone mirror. */
@@ -59,6 +63,8 @@ export async function mirrorStatus(): Promise<MirrorStatus> {
       readOnly: true,
       allowLan: false,
       lanUrl: null,
+      allowRemoteYolo: false,
+      publishTunnel: false,
     };
   }
   return invoke<MirrorStatus>("mirror_status");
@@ -108,5 +114,25 @@ export async function mirrorSetAllowLan(allowLan: boolean): Promise<MirrorStatus
     throw new Error("mirror host requires desktop app");
   }
   return invoke<MirrorStatus>("mirror_set_allow_lan", { allowLan });
+}
+
+/** Publish public internet tunnel via Cloudflare (true) or local/LAN only (false). */
+export async function mirrorSetPublishTunnel(
+  publishTunnel: boolean,
+): Promise<MirrorStatus> {
+  if (!isDesktopHost()) {
+    throw new Error("mirror host requires desktop app");
+  }
+  return invoke<MirrorStatus>("mirror_set_publish_tunnel", { publishTunnel });
+}
+
+/** Allow remote turns to reach relaxed-policy (YOLO) sessions (true) or block (false). */
+export async function mirrorSetAllowRemoteYolo(
+  allowRemoteYolo: boolean,
+): Promise<MirrorStatus> {
+  if (!isDesktopHost()) {
+    throw new Error("mirror host requires desktop app");
+  }
+  return invoke<MirrorStatus>("mirror_set_allow_remote_yolo", { allowRemoteYolo });
 }
 

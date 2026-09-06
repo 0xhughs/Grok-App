@@ -90,13 +90,63 @@ pub fn grant_path(path: &Path) {
     }
 }
 
+/// True when `path` matches sensitive files or directories that must never be accessed.
+pub fn is_denied_target(path: &Path) -> bool {
+    let comps: Vec<&str> = path
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .collect();
+
+    // 1. Check for denied directory components (.ssh, .aws, .gnupg)
+    for c in &comps {
+        if *c == ".ssh" || *c == ".aws" || *c == ".gnupg" {
+            return true;
+        }
+    }
+
+    // 2. Check for .config/gh
+    for i in 0..comps.len() {
+        if comps[i] == ".config" && i + 1 < comps.len() && comps[i + 1] == "gh" {
+            return true;
+        }
+    }
+
+    // 3. Check filename-specific denies
+    if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
+        if file_name == "secrets.json" || file_name == "session-api.json" {
+            return true;
+        }
+
+        if file_name == "auth.json" {
+            let in_sensitive_dir = comps.iter().any(|c| *c == ".grok" || *c == "agent-home");
+            let in_app_data = path_under_root(path, &crate::paths::app_data_root());
+            if in_sensitive_dir || in_app_data {
+                return true;
+            }
+        }
+
+        // 4. remote-im/*.json
+        if file_name.ends_with(".json") && comps.iter().any(|c| *c == "remote-im") {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// True when `path` sits under an allowed root (after canonicalize when possible).
 pub fn is_allowed(path: &Path) -> bool {
+    if is_denied_target(path) {
+        return false;
+    }
     let candidate = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     is_allowed_canonical(&candidate)
 }
 
 fn is_allowed_canonical(path: &Path) -> bool {
+    if is_denied_target(path) {
+        return false;
+    }
     if roots().read().is_empty() {
         // Lazy init on first check (tests / early calls before setup).
         refresh_from_store();
@@ -259,5 +309,74 @@ mod tests {
         let foobar = PathBuf::from("/foobar/x");
         assert!(!path_under_root(&foobar, &foo));
         assert!(path_under_root(Path::new("/foo/bar"), &foo));
+    }
+
+    #[test]
+    fn denies_sensitive_targets_even_under_allowed_roots() {
+        let tmp = std::env::temp_dir().join(format!("grok-scope-deny-{}", std::process::id()));
+        let project = tmp.join("proj");
+        let app = tmp.join("app");
+        let _ = fs::create_dir_all(&project);
+        let _ = fs::create_dir_all(&app);
+
+        let secrets = app.join("secrets.json");
+        fs::write(&secrets, "{}").unwrap();
+
+        let session_api = app.join("session-api.json");
+        fs::write(&session_api, "{}").unwrap();
+
+        let agent_home = app.join("agent-home");
+        let _ = fs::create_dir_all(&agent_home);
+        let auth_json = agent_home.join("auth.json");
+        fs::write(&auth_json, "{}").unwrap();
+
+        let remote_im_dir = app.join("remote-im");
+        let _ = fs::create_dir_all(&remote_im_dir);
+        let remote_im_cfg = remote_im_dir.join("config.json");
+        fs::write(&remote_im_cfg, "{}").unwrap();
+
+        let ssh_dir = project.join(".ssh");
+        let _ = fs::create_dir_all(&ssh_dir);
+        let id_rsa = ssh_dir.join("id_rsa");
+        fs::write(&id_rsa, "key").unwrap();
+
+        let aws_dir = project.join(".aws");
+        let _ = fs::create_dir_all(&aws_dir);
+        let aws_cred = aws_dir.join("credentials");
+        fs::write(&aws_cred, "cred").unwrap();
+
+        let gnupg_dir = project.join(".gnupg");
+        let _ = fs::create_dir_all(&gnupg_dir);
+        let gpg_key = gnupg_dir.join("secring.gpg");
+        fs::write(&gpg_key, "gpg").unwrap();
+
+        let gh_dir = project.join(".config").join("gh");
+        let _ = fs::create_dir_all(&gh_dir);
+        let gh_hosts = gh_dir.join("hosts.yml");
+        fs::write(&gh_hosts, "oauth_token").unwrap();
+
+        let normal_file = project.join("src").join("main.rs");
+        let _ = fs::create_dir_all(project.join("src"));
+        fs::write(&normal_file, "fn main() {}").unwrap();
+
+        with_isolated_roots(&project, &app, false, || {
+            assert!(!is_allowed(&secrets), "secrets.json should be denied");
+            assert!(!is_allowed(&session_api), "session-api.json should be denied");
+            assert!(!is_allowed(&auth_json), "agent-home/auth.json should be denied");
+            assert!(!is_allowed(&remote_im_cfg), "remote-im/config.json should be denied");
+            assert!(!is_allowed(&id_rsa), ".ssh/id_rsa should be denied");
+            assert!(!is_allowed(&ssh_dir), ".ssh directory should be denied");
+            assert!(!is_allowed(&aws_cred), ".aws/credentials should be denied");
+            assert!(!is_allowed(&gpg_key), ".gnupg/secring.gpg should be denied");
+            assert!(!is_allowed(&gh_hosts), ".config/gh/hosts.yml should be denied");
+
+            assert!(require_allowed(&secrets).is_err());
+            assert!(require_allowed(&id_rsa).is_err());
+
+            assert!(is_allowed(&normal_file));
+            assert!(require_allowed(&normal_file).is_ok());
+        });
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

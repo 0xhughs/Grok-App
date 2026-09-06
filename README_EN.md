@@ -65,7 +65,7 @@
 - 📝 **Files & Creation Loop** — Embedded CodeMirror 6 editor with instant disk synchronization, visual Git Diff review, comprehensive media preview (images, video, audio, PDF, Office documents), and AI image/video generation via Imagine.
 - 📲 **Omnichannel Remote IM** — Unified bridge connecting your local agent to Feishu/Lark, Telegram, Discord, Slack, DingTalk, WeCom, WeChat personal, QQ, Matrix, LINE, and Weibo; token-gated mobile web mirror and loopback REST session API.
 - 🐾 **Desktop Companion & Status Feedback** — Interactive always-on-top desktop pet companion with live agent status awareness, responsive reactions, and notification bubbles.
-- 🔐 **Privacy & Custom Relays** — API keys securely stored in your OS keychain. SuperGrok quota bar and heatmap tracking, custom provider relays (OpenRouter, DeepSeek, AI98PRO, etc.), and 15 built-in UI languages.
+- 🔐 **Privacy & Custom Relays** — API keys securely stored in your OS keychain by default (macOS Keychain, Windows Credential Manager, Linux Secret Service) where supported, with automatic fallback to private file storage (`0600`). SuperGrok quota bar and heatmap tracking, custom provider relays (OpenRouter, DeepSeek, AI98PRO, etc.), and 15 built-in UI languages.
 
 ---
 
@@ -97,7 +97,7 @@
 
 ### 5. Remote Connectivity & Cross-Device Access
 - **11+ IM Channel Bridges**: Connect to your preferred messaging apps to monitor, resume, and steer your local desktop agent on the go (`/p` project switch, `/r` resume).
-- **Mobile Web Mirror**: Lightweight token-gated web app for mobile browsers; compatible with Cloudflare Quick Tunnel for secure remote access.
+- **Mobile Web Mirror**: Lightweight token-gated web app for mobile browsers (defaults to loopback-only; opt-in same Wi-Fi and optional Cloudflare Quick Tunnel for remote access).
 - **Local Session API**: Loopback REST endpoints (`GET /v1/sessions`, `POST /v1/sessions/{id}/turns`) for scripting, CI, or third-party tool integrations.
 
 ### 6. Accounts, Relays & Personalization
@@ -244,7 +244,7 @@ Data layout:
   projects.json          # Project registry
   sessions_index.json    # Session metadata index
   settings.json          # Application preferences
-  secrets.json           # Secure key metadata (OS keychain prioritized, 0600 fallback)
+  secrets.json           # Secure key metadata (OS keychain preferred default, 0600 private file fallback)
   automations.json       # Scheduled automations
   projects/              # Project-specific metadata
   sessions/              # Persistent session history

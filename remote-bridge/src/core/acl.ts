@@ -3,10 +3,11 @@
  */
 
 export function isSenderAllowed(allowFrom: string | undefined, senderId: string): boolean {
-  const raw = (allowFrom ?? "*").trim();
-  if (!raw || raw === "*") return true;
+  if (!allowFrom) return false;
+  const raw = allowFrom.trim();
+  if (!raw || raw === "*") return false;
   const allowed = raw.split(",").map((s) => s.trim()).filter(Boolean);
-  if (allowed.includes("*")) return true;
+  if (allowed.includes("*")) return false;
   return allowed.includes(senderId);
 }
 

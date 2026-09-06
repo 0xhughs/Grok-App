@@ -79,6 +79,12 @@ pub struct ServeStatusDto {
     /// True when `grok agent serve --help` exposes `--remote` (proxy mode).
     #[serde(default)]
     pub cli_supports_remote: bool,
+    /// True when listening on a non-loopback bind address.
+    #[serde(default)]
+    pub non_loopback: bool,
+    /// Security notice/warning when listening on a non-loopback bind address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure_warning: Option<String>,
     pub message: Option<String>,
 }
 
@@ -145,7 +151,23 @@ pub fn normalize_bind(bind: Option<&str>) -> Result<String, String> {
     if addrs.is_empty() {
         return Err(format!("invalid serve bind `{raw}`: no addresses"));
     }
+    if addrs.iter().any(|a| !a.ip().is_loopback()) {
+        tracing::warn!(
+            target: "grok_app::serve",
+            bind = %raw,
+            "Serve bind address is non-loopback ({raw}); WebSocket port is exposed to the local network or internet"
+        );
+    }
     Ok(raw.to_string())
+}
+
+/// Check if a bind string resolves to any non-loopback addresses.
+pub fn is_non_loopback_bind(bind: &str) -> bool {
+    if let Ok(addrs) = bind.to_socket_addrs() {
+        addrs.into_iter().any(|a| !a.ip().is_loopback())
+    } else {
+        false
+    }
 }
 
 /// Client-facing WebSocket base (no secret): `ws://{bind}/ws`.
@@ -164,21 +186,22 @@ pub fn build_connection_url_masked(bind: &str, secret: &str) -> String {
     format!("ws://{bind}/ws?server-key={}", mask_secret(secret))
 }
 
-/// Client CLI connection string: `grok --remote ws://{bind}/ws --secret <token>`.
+/// Client CLI connection guidance avoiding plaintext secret exposure on argv:
+/// `GROK_SERVE_SECRET=<secret> grok --remote ws://{bind}/ws`.
 pub fn build_connection_cli(bind: &str, secret: &str) -> String {
     format!(
-        "grok --remote {} --secret {}",
-        build_remote_ws_base(bind),
-        secret
+        "GROK_SERVE_SECRET={} grok --remote {}",
+        secret,
+        build_remote_ws_base(bind)
     )
 }
 
 /// Log/UI-safe CLI connection string with masked secret.
 pub fn build_connection_cli_masked(bind: &str, secret: &str) -> String {
     format!(
-        "grok --remote {} --secret {}",
-        build_remote_ws_base(bind),
-        mask_secret(secret)
+        "GROK_SERVE_SECRET={} grok --remote {}",
+        mask_secret(secret),
+        build_remote_ws_base(bind)
     )
 }
 
@@ -453,6 +476,38 @@ pub fn port_is_open(bind: &str) -> bool {
     TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok()
 }
 
+pub fn build_serve_command(
+    cli_path: &Path,
+    bind: &str,
+    secret: &str,
+    remote: Option<&str>,
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(cli_path);
+    cmd.arg("agent")
+        .arg("serve")
+        .arg("--bind")
+        .arg(bind);
+    if let Some(r) = remote {
+        cmd.arg("--remote").arg(r);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    process_util::apply_no_window_std(&mut cmd);
+    process_util::ensure_home_env_std(&mut cmd);
+    if let Some(path_env) = process_util::enriched_path_env() {
+        cmd.env("PATH", path_env);
+    }
+    // `--remote` upstream may need the app proxy (NEW-02).
+    crate::proxy::apply_to_std_command(&mut cmd);
+    // Pass secret via environment variable GROK_SERVE_SECRET to avoid command-line secret leaks on argv.
+    cmd.env("GROK_SERVE_SECRET", secret);
+    cmd.env_remove("GROK_AGENT_SECRET");
+
+    cmd
+}
+
 fn spawn_serve_process(
     cli_path: &Path,
     bind: &str,
@@ -468,29 +523,7 @@ fn spawn_serve_process(
         "spawning grok agent serve"
     );
 
-    let mut cmd = std::process::Command::new(cli_path);
-    cmd.arg("agent")
-        .arg("serve")
-        .arg("--bind")
-        .arg(bind)
-        .arg("--secret")
-        .arg(secret);
-    if let Some(r) = remote {
-        cmd.arg("--remote").arg(r);
-    }
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-
-    process_util::apply_no_window_std(&mut cmd);
-    process_util::ensure_home_env_std(&mut cmd);
-    if let Some(path_env) = process_util::enriched_path_env() {
-        cmd.env("PATH", path_env);
-    }
-    // `--remote` upstream may need the app proxy (NEW-02).
-    crate::proxy::apply_to_std_command(&mut cmd);
-    // Prefer explicit secret over env bleed; clear accidental env secret pollution.
-    cmd.env_remove("GROK_AGENT_SECRET");
+    let mut cmd = build_serve_command(cli_path, bind, secret, remote);
 
     #[cfg(unix)]
     {
@@ -592,6 +625,18 @@ fn collect_status_sync(include_connection_secrets: bool) -> ServeStatusDto {
         );
     }
 
+    let non_loopback = is_non_loopback_bind(&bind);
+    let exposure_warning = if non_loopback {
+        Some(format!(
+            "Security notice: serve is listening on non-loopback bind `{bind}` and exposed to the network."
+        ))
+    } else {
+        None
+    };
+    if non_loopback && message.is_none() {
+        message = exposure_warning.clone();
+    }
+
     ServeStatusDto {
         state: state.into(),
         bind,
@@ -607,6 +652,8 @@ fn collect_status_sync(include_connection_secrets: bool) -> ServeStatusDto {
         cli_found,
         cli_supports_serve,
         cli_supports_remote,
+        non_loopback,
+        exposure_warning,
         message,
     }
 }
@@ -646,6 +693,13 @@ pub async fn serve_start(
         // External process already on the default/requested port — fail closed rather
         // than double-bind and leak a secret for a process we do not control.
         let bind_norm = normalize_bind(bind.as_deref())?;
+        if is_non_loopback_bind(&bind_norm) {
+            tracing::warn!(
+                target: "grok_app::serve",
+                bind = %bind_norm,
+                "Starting grok agent serve on non-loopback bind `{bind_norm}`; WebSocket server is exposed to local network/internet"
+            );
+        }
         let remote_norm = normalize_remote_url(remote.as_deref())?;
         if remote_norm.is_some() && !current.cli_supports_remote {
             return Err(

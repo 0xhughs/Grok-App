@@ -1638,6 +1638,10 @@ pub fn run() {
 
             mirror::mirror_set_allow_lan,
 
+            mirror::mirror_set_publish_tunnel,
+
+            mirror::mirror_set_allow_remote_yolo,
+
             mirror::mirror_start,
 
             mirror::mirror_stop,

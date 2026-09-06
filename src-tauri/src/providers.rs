@@ -727,10 +727,8 @@ fn read_text(path: &Path) -> String {
 }
 
 fn write_text(path: &Path, text: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    fs::write(path, text).map_err(|e| e.to_string())
+    crate::agent_home_config::write_private_agent_home_file(path, text.as_bytes())
+        .map_err(|e| e.to_string())
 }
 
 /// Split config text into lines for section indexing.
@@ -3748,5 +3746,21 @@ context_window = "1000000"
             !config.contains("extra_headers"),
             "empty list must drop extra_headers, not copy the old table:\n{config}"
         );
+    }
+
+    #[test]
+    fn write_text_enforces_0600_permissions() {
+        let tmp = std::env::temp_dir().join(format!("grok-prov-0600-{}", std::process::id()));
+        let file = tmp.join("config.toml");
+        write_text(&file, "test = 1").unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "test = 1");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = fs::metadata(&file).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        }
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

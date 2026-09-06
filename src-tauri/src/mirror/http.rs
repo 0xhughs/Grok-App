@@ -279,13 +279,12 @@ async fn serve_index(state: &HttpState, headers: &HeaderMap) -> Response {
                 path = %index_path.display(),
                 "mirror: cannot read index.html — is dist built? set GROK_MIRROR_DIST"
             );
+
             // Temporary placeholder when dist missing (Slice 1 gate proof still works).
             let placeholder = format!(
                 r#"<!doctype html><html><head><meta charset="utf-8"><title>Grok Mirror</title>
-<script>window.__MIRROR__={{token:{tok},protocol:1}};</script>
 <base href="/t/{token}/">
 </head><body><p>Mirror host online (dist not found). Build UI or set GROK_MIRROR_DIST.</p></body></html>"#,
-                tok = serde_json::to_string(&token).unwrap_or_else(|_| "\"\"".into()),
                 token = token,
             );
             log_mirror_html_session(headers);
@@ -299,11 +298,17 @@ async fn serve_index(state: &HttpState, headers: &HeaderMap) -> Response {
     html_no_store(Html(injected).into_response())
 }
 
+pub const MIRROR_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'; form-action 'self'; base-uri 'self';";
+
 /// SPA shell and dist-missing placeholder must never be cached by phone browsers.
 fn html_no_store(mut res: Response) -> Response {
     res.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("no-cache, no-store, must-revalidate"),
+    );
+    res.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(MIRROR_CSP),
     );
     res
 }
@@ -317,21 +322,17 @@ fn log_mirror_html_session(headers: &HeaderMap) {
     tracing::info!(ua = %ua_snip, "mirror: authenticated HTML session");
 }
 
-/// Inject `<base href>`, `window.__MIRROR__`, and rewrite root-absolute asset URLs under token.
+/// Inject `<base href>` and rewrite root-absolute asset URLs under token.
 pub fn inject_mirror_shell(html: &str, token: &str) -> String {
     let prefix = format!("/t/{token}");
     // Rewrite root-absolute asset URLs first (absolute paths ignore <base href>).
-    // Do this before injecting our own base/script tags so we never double-prefix them.
+    // Do this before injecting our own base tag so we never double-prefix them.
     let out = html
         .replace("src=\"/", &format!("src=\"{prefix}/"))
         .replace("href=\"/", &format!("href=\"{prefix}/"));
 
     let base = format!(r#"<base href="{prefix}/">"#);
-    let mirror_script = format!(
-        r#"<script>window.__MIRROR__={{token:{},protocol:1}};</script>"#,
-        serde_json::to_string(token).unwrap_or_else(|_| "\"\"".into())
-    );
-    let inject = format!("{mirror_script}\n    {base}");
+    let inject = format!("    {base}");
 
     if let Some(idx) = out.find("<head>") {
         let mut s = String::with_capacity(out.len() + inject.len() + 64);
@@ -453,14 +454,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn inject_adds_base_and_mirror_and_rewrites_assets() {
+    fn inject_adds_base_and_rewrites_assets_without_inline_script() {
         let html = r#"<!doctype html><html><head>
 <meta charset="UTF-8" />
 <script type="module" crossorigin src="/assets/index-abc.js"></script>
 <link rel="stylesheet" crossorigin href="/assets/index-abc.css">
 </head><body><div id="root"></div></body></html>"#;
         let out = inject_mirror_shell(html, "tok123");
-        assert!(out.contains(r#"window.__MIRROR__={token:"tok123",protocol:1}"#));
+        assert!(!out.contains("__MIRROR__"));
+        assert!(!out.contains("<script>window.__MIRROR__"));
         assert!(out.contains(r#"<base href="/t/tok123/">"#));
         assert!(out.contains(r#"src="/t/tok123/assets/index-abc.js""#));
         assert!(out.contains(r#"href="/t/tok123/assets/index-abc.css""#));
@@ -503,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn html_no_store_sets_cache_control() {
+    fn html_no_store_sets_cache_control_and_csp() {
         let res = html_no_store(Html("<p>x</p>".to_string()).into_response());
         let cc = res
             .headers()
@@ -511,5 +513,12 @@ mod tests {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
         assert_eq!(cc, "no-cache, no-store, must-revalidate");
+
+        let csp = res
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert_eq!(csp, MIRROR_CSP);
     }
 }

@@ -5898,11 +5898,33 @@ pub fn parse_acp_server_addr(raw: &str) -> Result<ParsedAcpServerAddr, String> {
     if port == 0 {
         return Err("invalid port".into());
     }
+    if host == "0.0.0.0"
+        || host == "::"
+        || host == "0:0:0:0:0:0:0:0"
+        || host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_unspecified())
+            .unwrap_or(false)
+    {
+        return Err("0.0.0.0 address is not allowed".into());
+    }
 
     Ok(ParsedAcpServerAddr {
         host: host.to_string(),
         port,
     })
+}
+
+/// Check if an ACP host is a safe loopback target (localhost, 127.0.0.0/8, [::1]).
+pub fn is_loopback_acp_host(host: &str) -> bool {
+    let h = host.trim().trim_matches(['[', ']']).to_ascii_lowercase();
+    if h == "localhost" {
+        return true;
+    }
+    if let Ok(ip) = h.parse::<std::net::IpAddr>() {
+        return ip.is_loopback();
+    }
+    false
 }
 
 /// TCP-only reachability probe for Settings → ACP server (no secrets, no RPC).
@@ -6068,6 +6090,30 @@ mod acp_server_addr_tests {
         assert!(parse_acp_server_addr("localhost:abc").is_err());
         assert!(parse_acp_server_addr("127.0.0.1:8799/path").is_err());
         assert!(parse_acp_server_addr("fe80::1").is_err());
+    }
+
+    #[test]
+    fn parse_rejects_0_0_0_0_and_unspecified() {
+        assert!(parse_acp_server_addr("0.0.0.0:8799").is_err());
+        assert!(parse_acp_server_addr("ws://0.0.0.0:8799").is_err());
+        assert!(parse_acp_server_addr("[0.0.0.0]:8799").is_err());
+        assert!(parse_acp_server_addr("[::]:8799").is_err());
+        assert!(parse_acp_server_addr("::8799").is_err());
+    }
+
+    #[test]
+    fn is_loopback_acp_host_identifies_loopback_and_remote() {
+        assert!(is_loopback_acp_host("127.0.0.1"));
+        assert!(is_loopback_acp_host("127.0.0.2"));
+        assert!(is_loopback_acp_host("localhost"));
+        assert!(is_loopback_acp_host("::1"));
+        assert!(is_loopback_acp_host("[::1]"));
+
+        assert!(!is_loopback_acp_host("0.0.0.0"));
+        assert!(!is_loopback_acp_host("::"));
+        assert!(!is_loopback_acp_host("192.168.1.50"));
+        assert!(!is_loopback_acp_host("10.0.0.1"));
+        assert!(!is_loopback_acp_host("example.com"));
     }
 
     #[tokio::test]

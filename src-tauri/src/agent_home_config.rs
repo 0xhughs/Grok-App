@@ -541,7 +541,13 @@ pub fn ensure_agent_home_config_sane(session_data_mode: &str) -> Result<ConfigHe
             .unwrap_or(0);
         let backup = path.with_file_name(format!("config.toml.bak-heal-{nanos}"));
         fs::copy(&path, &backup).map_err(|e| format!("backup config.toml: {e}"))?;
-        fs::write(&path, &healed).map_err(|e| format!("write healed config.toml: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&backup, fs::Permissions::from_mode(0o600));
+        }
+        write_private_agent_home_file(&path, healed.as_bytes())
+            .map_err(|e| format!("write healed config.toml: {e}"))?;
 
         tracing::warn!(
             target: "agent_home_config",
@@ -562,6 +568,39 @@ pub fn ensure_agent_home_config_sane(session_data_mode: &str) -> Result<ConfigHe
     })
 }
 
+/// Write a file under agent-home enforcing 0o600 private permissions on Unix.
+pub fn write_private_agent_home_file<P: AsRef<std::path::Path>, C: AsRef<[u8]>>(
+    path: P,
+    contents: C,
+) -> std::io::Result<()> {
+    let p = path.as_ref();
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(p)?;
+        file.write_all(contents.as_ref())?;
+        file.flush()?;
+        let _ = fs::set_permissions(p, fs::Permissions::from_mode(0o600));
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(p, contents)
+    }
+}
+
 /// Strict write: read → transform → write agent-home config.toml.
 /// Shared mode → `Err` via [`resolve_writable_config_path`].
 pub fn update_config_toml(
@@ -575,7 +614,8 @@ pub fn update_config_toml(
         }
         let existing = fs::read_to_string(&path).unwrap_or_default();
         let next = transform(&existing);
-        fs::write(&path, next).map_err(|e| format!("write config: {e}"))?;
+        write_private_agent_home_file(&path, next.as_bytes())
+            .map_err(|e| format!("write config: {e}"))?;
         Ok(path)
     })
 }
@@ -859,5 +899,31 @@ command = \"y\"
 
         std::env::remove_var("GROK_APP_HOME");
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn write_private_agent_home_file_enforces_0600() {
+        let dir = temp_app_home("private_0600");
+        let file = dir.join("test_config.toml");
+        write_private_agent_home_file(&file, b"test = 123\n").unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "test = 123\n");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = fs::metadata(&file).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+
+            // Make the file more permissive (0644) and verify rewrite restores 0600
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+            assert_eq!(fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o644);
+
+            write_private_agent_home_file(&file, b"test = 456\n").unwrap();
+            let meta2 = fs::metadata(&file).unwrap();
+            assert_eq!(meta2.permissions().mode() & 0o777, 0o600);
+            assert_eq!(fs::read_to_string(&file).unwrap(), "test = 456\n");
+        }
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
