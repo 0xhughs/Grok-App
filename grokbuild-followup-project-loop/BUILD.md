@@ -161,16 +161,21 @@ Grep (cwd `/workspace`, Proof lists `-n` / counts):
 none
 
 ## Review
-Plan approval: none
+Plan approval: `D09-PLAN-1` APPROVE_PLAN — reviewer `bc-00529b2b-87b0-5be3-8efd-8b39160c8438`, contract `0daea699…064c`, candidate `87743f68…82db`.
 Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
+
+### D09-PLAN-1 — APPROVE_PLAN (recorded verbatim summary)
+Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-00529b2b-87b0-5be3-8efd-8b39160c8438`, worktree `/tmp/loop-review/D09-PLAN-1` @ `3b4e1cda`.
+Contract `0daea699…064c` (match). Candidate before/after `87743f68…82db` (unchanged, clean-tree). Porcelain empty. Code vs `62f55936` is pack-only.
+Judgments: (a) BUILD matches SLICES Now 09; (b) locked constraints not weakened; (c) live “today” descriptions accurate; (d) Out complete; (e) one slice + list-entry `*` rule; (f) vitest/typecheck satisfiable; (g) empty defaultAcl + Weixin override is Feature Parity. No blockers. Observation: `channelSchemaCatalog.ts` ACL default still `"*"` — do not expand Files.
 
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/slice-06-restrict-headless-9f74` off `origin/main` `fbb03fc8`.
-Worker / role / phase: Reviewer / plan / slice 09
-Dispatch ID / launch state / input identity: `D09-PLAN-1` / launching / candidate `87743f6806d8c38e72aa364cf761b5d5a0a0fd6ee7532ea8cc89dc1f515a82db` (code HEAD `62f55936`), contract `0daea6996de17caa3e33ddb0df7151b32378b1c44a4b65a0693603b0dfe0064c`
-Pending result / last consumed dispatch: none / `D09-DRAFT-1`
+Worker / role / phase: Builder / implementation / slice 09
+Dispatch ID / launch state / input identity: `D09-BUILD-1` / launching / candidate `87743f6806d8c38e72aa364cf761b5d5a0a0fd6ee7532ea8cc89dc1f515a82db` (code HEAD `62f55936`), contract `0daea6996de17caa3e33ddb0df7151b32378b1c44a4b65a0693603b0dfe0064c`
+Pending result / last consumed dispatch: none / `D09-PLAN-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -183,17 +188,18 @@ Rejection count: 0
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none
 Repair awaiting review: false
-Review events: none
+Review events:
+- E1 / `D09-PLAN-1` / plan / APPROVE_PLAN / contract `0daea699…064c`, candidate `87743f68…82db` / no gaps / rejection count 0
 Budget limit / consumed / measurement: Not configured; do not invent a budget
-Blocker / resume status / resume action / recheck condition / deadline: if interrupted before `D09-PLAN-1` returns, re-dispatch `D09-PLAN-1`. Do not publish.
-Advance phase: 09 Proposed page persisted; plan review launching
-Next slice ID / draft: 09 (`D09-PLAN-1` launching)
+Blocker / resume status / resume action / recheck condition / deadline: if interrupted before `D09-BUILD-1` returns, re-dispatch `D09-BUILD-1`. Do not publish.
+Advance phase: plan approved; implementation launching
+Next slice ID / draft: 09 (`D09-BUILD-1` launching)
 Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–08.
 
 ## Status
-Proposed
+Building
 
 ## Next
-Independent Reviewer `D09-PLAN-1`. After APPROVE_PLAN: Builder implements. After REJECT: Builder revises proposal.
+Builder `D09-BUILD-1` implements the accepted 09 contract. After proof: Ready for review / `D09-IMPL-1`.
 
-**Resume action:** launch `D09-PLAN-1` (isolated worktree, no write). Do not re-ship 01–08. Do not implement Later-outside work. Do not publish.
+**Resume action:** launch `D09-BUILD-1` (implement slice 09 only). Do not re-ship 01–08. Do not implement Later-outside work. Do not publish.
