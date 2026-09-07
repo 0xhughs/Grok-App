@@ -45,22 +45,17 @@ Release review events / last consumed dispatch: none
 
 ## Shipped
 - 01 Restore real CI pins — C1, N7 — code commit `73193a0e`, candidate `8c79e574…341e`, implementation approval `D01-IMPL-1`; archive `slices/01-restore-real-ci-pins.md`. Note: `dtolnay/rust-toolchain` pinned to `refs/heads/stable` tip (no tag exists) — sanctioned exception; checker reports UNKNOWN_SHA when the branch moves (fail-closed).
+- 02 Deny wildcard IM senders on the live bridge — R4, N2 — code commit `fd142233`, candidate `2a3620d1…390b`, implementation approval `D02-IMPL-1`; archive `slices/02-deny-wildcard-im-senders.md`. Residual: UI/`docs` still offer `*` until slice 09; stored `"*"` ACLs fail closed on enable.
 
 ## Now
-### 02 Deny wildcard IM senders on the live bridge
-Goal: Rust `remote_im` treats `*` and empty as deny. Error text does not recommend `*`.
-Provides: R4, N2
-Depends on: 01
-Target membership: inside
-Out: Deleting the legacy Node `remote-bridge/` package.
-
-## Later
 ### 03 Gate dangerous IPC
 Goal: `side_browser_eval` cannot target `main`/`session-*`/`pet`/`theme-editor`. YOLO, CLI path, mirror publish, plugin `--trust`, and serve start require host-side confirm or main-only command permissions.
 Provides: D1, N1, N10
 Depends on: 01
 Target membership: inside
 Out: Redesigning the 423-command surface in one slice.
+
+## Later
 
 ### 04 Serve secret names
 Goal: Child serve gets `GROK_AGENT_SECRET` and `GROK_SERVE_SECRET`. `--secret` stays off argv. Non-loopback advertise only after an unauthenticated probe fails.
