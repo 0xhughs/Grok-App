@@ -99,7 +99,29 @@ No file outside the Files constraint changes.
 - No `pnpm vitest` (no TS change). Implementation Proof runs the targeted libs above. Full `cd src-tauri && cargo test` is required in implementation Proof (environment links: webkit2gtk present, same as slice 02); expected `0 failed`.
 
 ## Proof
-none (Proposed; draft `D03-DRAFT-1` produced this page, no code)
+Builder `D03-BUILD-1` (agent `bc-7ec31d33-231c-5a3d-9447-900c072e1406`), implemented in `/workspace` at HEAD `41253f1f`, committed by coordinator as `0aed78ab` (code-only). Candidate identity (clean-tree) `d72f73209511cb4cae63933103c68287a8fabe2b8b64cbdc522a465f368252a6`. Changed paths: exactly the seven Files (`extensions_p2.rs` rustfmt reflow of pre-existing dirt + gate; `settings.rs` field-gate + tests + rustfmt reflow of already-unclean file; others gate/tests only). `mirror/mod.rs` and `serve.rs` not rustfmt-rewritten. Rust `rustc 1.98.1`. Logs under `/tmp/build03/`. Command count 423. Capabilities JSON untouched.
+
+Implementation: `validate_side_label` = `validate_label` → `is_first_party_webview_label` → prefix; `FIRST_PARTY_SIDE_TARGET_ERR` = `refusing to target a first-party webview`. `get_side_webview` / `eval` call `validate_side_label` only. `install_hook` calls `validate_side_label` after empty-label fast path. `MAIN_ONLY_IPC_ERR` + `require_main_window_label` on the `commands/mod.rs` facade. Injected `window: tauri::Window`; `window.label()` taken before `.await`. Gate before `mirror_start` attach/setters and before `serve_start` / `plugin_install` `spawn_blocking`. `settings_set` field-gated via `dangerous_settings_flipped` (`PermissionPolicy::parse` + trimmed cli/acp) then `require_main_window_label` before `validate_manual_cli_path`. `maybe_autostart` ungated. `--trust` argv unchanged. R6 validator byte-identical.
+
+### Done when → evidence
+- First-party list + order: `is_first_party_webview_label` trims then `main`/`pet`/`theme-editor`/`session-` prefix; first-party error fires before prefix (`validate_side_label`).
+- Grep `validate_label(`: exactly four lines — `:103` `fn validate_label`, `:125` production call inside `validate_side_label`, `:737`/`:738` `label_rules`. No `eval` / `get_side_webview`.
+- `validate_side_label` in host: def + `get_side_webview` + `create` + `close` + `eval` + tests.
+- `validate_side_label` in blob: `install_hook` `:1173` + test.
+- `require_main_window_label`: helper, `settings_set` flip guard, `mirror_start`, `mirror_set_publish_tunnel`, `mirror_set_allow_remote_yolo`, `plugin_install`, `serve_start`, tests. Zero on `session_set_policy` / `composer_prefs_set` / `project_set_permission_policy` / `mirror_set_allow_lan`.
+- Named tests present and green (below). Honest limitation: helper-level; greps prove call-before-mutate.
+- Negative proof: pre-change `eval_rejects_first_party_labels` had no symbol; pre-change `validate_side_label("main")` was prefix-`Err` (`resource-browser`), not `FIRST_PARTY_SIDE_TARGET_ERR`.
+
+### Tests → evidence
+- `side_browser_host::tests`: `ok. 7 passed; 0 failed` (includes `eval_rejects_first_party_labels`, `label_rules`).
+- `side_browser_blob::tests`: `ok. 5 passed; 0 failed` (includes `install_hook_rejects_first_party_labels`).
+- `commands::ipc_gate_tests`: `ok. 1 passed; 0 failed`.
+- `commands::settings_tests`: `ok. 9 passed; 0 failed` (four `settings_set_*` plus existing ACP/cli validators).
+- Full `cd src-tauri && cargo test`: lib `1649 passed; 0 failed; 1 ignored`; bin/doc 0/0; exit 0. (1649 = slice-02 1642 + 7 new: eval_rejects, install_hook_rejects, ipc_gate, four settings_set_*.)
+- Lint: `rustfmt --edition 2021 --check` on the five previously-listed files exit 0. `cargo fmt --all -- --check` exit 1, same 16-file dirty set. `cargo clippy --all-targets` exit 0 / 3 warnings; `-D warnings` exit 101 at `batch_agents.rs:79`, `path_scope.rs:129`, `wecom.rs:210`.
+- Scope: `git diff --stat` vs `fd142233` lists exactly the seven Files.
+
+Caveats: settings.rs / extensions_p2.rs rustfmt-reflowed pre-existing dirt so those files could satisfy `--check` (semantic no-op; validators byte-identical). No live Tauri window run. Residual session-policy XSS and React-only GlassModal unchanged (Out).
 
 ## Review
 Plan approval: `D03-PLAN-2` APPROVE_PLAN — reviewer `bc-e6cec76a-5302-5f28-832a-ccc068ec7886`, contract `a2d8e0fb…820b` (revised), candidate `2a3620d1…390b`. (`D03-PLAN-1` REJECT_PLAN on `116fc217…070e`; superseded, record retained below.)
@@ -119,9 +141,9 @@ Blocker 1: Done when / N1 grep ``rg -n 'validate_label\(' src-tauri/src/side_bro
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Builder / implementation / slice 03
-Dispatch ID / launch state / input identity: `D03-BUILD-1` / launching / candidate `2a3620d1…390b` (code HEAD `fd142233`), contract `a2d8e0fb…820b`, plan approval `D03-PLAN-2`
-Pending result / last consumed dispatch: none / `D03-PLAN-2`
+Worker / role / phase: Reviewer / implementation review / slice 03
+Dispatch ID / launch state / input identity: `D03-IMPL-1` / launching / candidate `d72f7320…52a6` (code HEAD `0aed78ab`), baseline `2a3620d1…390b`, contract `a2d8e0fb…820b`, plan approval `D03-PLAN-2`
+Pending result / last consumed dispatch: none / `D03-BUILD-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -129,7 +151,7 @@ Snapshot capture and recheck commands / coverage / exclusions:
 - Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/` (protocol + artifacts).
 Baseline snapshot: slice 02 shipped candidate — HEAD `fd142233dd2235cb3832a87b00bdb95d83cb74f2` (code), clean-tree, CANDIDATE `2a3620d159da5a3960a7b59e66e8908de27727a3c265ad0a0760235a5bb7390b`
 Contract identity: `a2d8e0fb6f3c40d06b74f665164fffc40e2b6dd2926798446a0e57f51caf820b` (revised after D03-PLAN-1; supersedes `116fc217…070e`)
-Candidate snapshot: HEAD `fd142233dd2235cb3832a87b00bdb95d83cb74f2` (code commit), clean-tree, CANDIDATE `2a3620d159da5a3960a7b59e66e8908de27727a3c265ad0a0760235a5bb7390b`
+Candidate snapshot: HEAD `0aed78abe79def986d98b7594a7625a334df8cc0` (code commit), clean-tree, CANDIDATE `d72f73209511cb4cae63933103c68287a8fabe2b8b64cbdc522a465f368252a6`
 Rejection count: 1
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none (plan approved D03-PLAN-2; prior grep gap resolved)
@@ -144,7 +166,7 @@ Next slice ID / draft: 04 (after 03 ships)
 Environment note: `cargo test` is linkable here — webkit2gtk-4.1 2.52.6, gtk+-3.0 3.24.41, libsoup-3.0, javascriptcoregtk-4.1, ayatana-appindicator3, librsvg installed via apt on 2026-09-06; rustc 1.98.1 stable default.
 
 ## Status
-Building (plan approved `D03-PLAN-2`; pending `D03-BUILD-1`)
+Ready for review (plan approved `D03-PLAN-2`; Builder candidate `0aed78ab` from `D03-BUILD-1`)
 
 ## Next
-Builder implements the approved contract in `/workspace`. On proof → Ready for review `D03-IMPL-1`. Do not rustfmt-rewrite dirty `mirror/mod.rs` / `serve.rs`.
+Independent implementation review `D03-IMPL-1` in isolated worktree. On APPROVE_IMPLEMENTATION → Shipped, archive `slices/03-gate-dangerous-ipc.md`, advance to 04. On REJECT → rejection count 2, Builder repairs.
