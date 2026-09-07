@@ -46,23 +46,17 @@ Release review events / last consumed dispatch: none
 ## Shipped
 - 01 Restore real CI pins — C1, N7 — code commit `73193a0e`, candidate `8c79e574…341e`, implementation approval `D01-IMPL-1`; archive `slices/01-restore-real-ci-pins.md`. Note: `dtolnay/rust-toolchain` pinned to `refs/heads/stable` tip (no tag exists) — sanctioned exception; checker reports UNKNOWN_SHA when the branch moves (fail-closed).
 - 02 Deny wildcard IM senders on the live bridge — R4, N2 — code commit `fd142233`, candidate `2a3620d1…390b`, implementation approval `D02-IMPL-1`; archive `slices/02-deny-wildcard-im-senders.md`. Residual: UI/`docs` still offer `*` until slice 09; stored `"*"` ACLs fail closed on enable.
+- 03 Gate dangerous IPC — D1, N1, N10 — code commit `0aed78ab`, candidate `d72f7320…52a6`, implementation approval `D03-IMPL-1`; archive `slices/03-gate-dangerous-ipc.md`. Residual: session/composer/project policy still callable from `session-*`; React GlassModal is not a host confirm (slice 09 docs).
 
 ## Now
-### 03 Gate dangerous IPC
-Goal: `side_browser_eval` cannot target `main`/`session-*`/`pet`/`theme-editor`. YOLO, CLI path, mirror publish, plugin `--trust`, and serve start require host-side confirm or main-only command permissions.
-Provides: D1, N1, N10
-Depends on: 01
-Target membership: inside
-Out: Redesigning the 423-command surface in one slice.
-
-## Later
-
 ### 04 Serve secret names
 Goal: Child serve gets `GROK_AGENT_SECRET` and `GROK_SERVE_SECRET`. `--secret` stays off argv. Non-loopback advertise only after an unauthenticated probe fails.
 Provides: R7, N3
 Depends on: 01
 Target membership: inside
 Out: Changing official CLI source.
+
+## Later
 
 ### 05 Honest CLI installer
 Goal: `KNOWN_CLI_HASHES` is generated from real downloads or removed. First-seen hash change is a hard error with UI override. Hash store is 0600.
