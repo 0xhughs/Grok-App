@@ -118,7 +118,7 @@ Each result records dispatch ID, reviewer identity, verdict, contract identity, 
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
 Worker / role / phase: Reviewer / plan review / slice 04
-Dispatch ID / launch state / input identity: `D04-PLAN-1` / launching / candidate `d72f7320…52a6` (code HEAD `0aed78ab`), contract pending recompute, draft `D04-DRAFT-1`
+Dispatch ID / launch state / input identity: `D04-PLAN-1` / launching / candidate `d72f7320…52a6` (code HEAD `0aed78ab`), contract `06efee0f…7869`, draft `D04-DRAFT-1`
 Pending result / last consumed dispatch: none / `D04-DRAFT-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
@@ -126,7 +126,7 @@ Snapshot capture and recheck commands / coverage / exclusions:
 - Coverage: entire tracked tree outside the pack dir (source, tests, `.github/workflows/`, `scripts/`, lockfiles, docs, capabilities, assets).
 - Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/` (protocol + artifacts).
 Baseline snapshot: slice 03 shipped candidate — HEAD `0aed78abe79def986d98b7594a7625a334df8cc0` (code), clean-tree, CANDIDATE `d72f73209511cb4cae63933103c68287a8fabe2b8b64cbdc522a465f368252a6`
-Contract identity: (recompute after commit)
+Contract identity: `06efee0f18fe84a7bc576b708802f0fb726f8b787af66e68304841c362ed7869`
 Candidate snapshot: HEAD `0aed78abe79def986d98b7594a7625a334df8cc0` (code commit), clean-tree, CANDIDATE `d72f73209511cb4cae63933103c68287a8fabe2b8b64cbdc522a465f368252a6`
 Rejection count: 0
 Consecutive no-progress repairs: 0
