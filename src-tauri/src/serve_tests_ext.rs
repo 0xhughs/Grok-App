@@ -230,5 +230,136 @@ Options:
             envs.get("GROK_SERVE_SECRET"),
             Some(&Some("sekrit-token-123".to_string()))
         );
+        assert_eq!(
+            envs.get("GROK_AGENT_SECRET"),
+            Some(&Some("sekrit-token-123".to_string()))
+        );
+    }
+
+    #[test]
+    fn classify_unauth_health_status_matrix() {
+        assert_eq!(
+            classify_unauth_health_status(Some(200)),
+            UnauthHealthClass::Open
+        );
+        assert_eq!(
+            classify_unauth_health_status(Some(204)),
+            UnauthHealthClass::Open
+        );
+        for code in [401_u16, 403, 404, 500] {
+            assert_eq!(
+                classify_unauth_health_status(Some(code)),
+                UnauthHealthClass::Closed
+            );
+        }
+        assert_eq!(
+            classify_unauth_health_status(None),
+            UnauthHealthClass::Inconclusive
+        );
+
+        let loopback_open = serve_auth_policy(UnauthHealthClass::Open, false);
+        assert!(!loopback_open.advertise);
+        assert!(loopback_open.keep_bind);
+
+        let lan_open = serve_auth_policy(UnauthHealthClass::Open, true);
+        assert!(!lan_open.advertise);
+        assert!(!lan_open.keep_bind);
+
+        for class in [UnauthHealthClass::Closed, UnauthHealthClass::Inconclusive] {
+            for non_loopback in [false, true] {
+                let policy = serve_auth_policy(class, non_loopback);
+                assert!(policy.advertise);
+                assert!(policy.keep_bind);
+            }
+        }
+    }
+
+    #[test]
+    fn unauth_health_url_rewrites_unspecified_and_keeps_loopback() {
+        assert_eq!(
+            unauth_health_url("127.0.0.1:2419"),
+            "http://127.0.0.1:2419/health"
+        );
+        assert_eq!(
+            unauth_health_url("0.0.0.0:2419"),
+            "http://127.0.0.1:2419/health"
+        );
+        let v6 = unauth_health_url("[::1]:2419");
+        assert!(v6.contains("/health"));
+        assert!(v6.contains("[::1]"));
+        assert!(!unauth_health_url("0.0.0.0:2419").contains('?'));
+        assert!(!unauth_health_url("[::]:2419").contains('?'));
+        assert!(!unauth_health_url(":::2419").contains('?'));
+    }
+
+    #[test]
+    fn unauth_health_probe_open_refuses_advertise() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let bind = format!("127.0.0.1:{}", addr.port());
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                let _ = std::io::Write::write_all(
+                    &mut stream,
+                    b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+        assert_eq!(probe_unauth_health(&bind), UnauthHealthClass::Open);
+        assert!(!serve_auth_policy(UnauthHealthClass::Open, false).advertise);
+    }
+
+    #[test]
+    fn unauth_health_probe_closed_allows_advertise() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let bind = format!("127.0.0.1:{}", addr.port());
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                let _ = std::io::Write::write_all(
+                    &mut stream,
+                    b"HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+        assert_eq!(probe_unauth_health(&bind), UnauthHealthClass::Closed);
+        let policy = serve_auth_policy(UnauthHealthClass::Closed, true);
+        assert!(policy.advertise);
+        assert!(policy.keep_bind);
+    }
+
+    #[test]
+    fn unauth_health_probe_sends_no_secret() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let bind = format!("127.0.0.1:{}", addr.port());
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 8192];
+                let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let _ = std::io::Write::write_all(
+                    &mut stream,
+                    b"HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n",
+                );
+                let _ = tx.send(req);
+            }
+        });
+        let _ = probe_unauth_health(&bind);
+        let req = rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("probe request");
+        assert!(req.contains("GET /health"));
+        assert!(!req.contains("server-key"));
+        assert!(!req.contains("Authorization"));
+        assert!(!req.contains("Cookie"));
+        assert!(!req.contains("GROK_AGENT_SECRET"));
+        assert!(!req.contains("GROK_SERVE_SECRET"));
+        assert!(!req.contains("--secret"));
     }
 }

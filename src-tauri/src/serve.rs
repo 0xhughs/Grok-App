@@ -10,6 +10,7 @@
 //! - WebSocket URL: `ws://{bind}/ws?server-key={secret}`
 //! - or CLI: `grok --remote ws://{bind}/ws --secret <token>`
 
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::process::Stdio;
@@ -28,6 +29,25 @@ const SERVE_START_WAIT_MS: u64 = 4000;
 const SERVE_START_POLL_MS: u64 = 150;
 /// Default listen address for `grok agent serve` (matches CLI default).
 pub const DEFAULT_SERVE_BIND: &str = "127.0.0.1:2419";
+/// Unauthenticated HTTP path probed after `serve_start` (no secret, no query).
+pub const UNAUTH_HEALTH_PATH: &str = "/health";
+/// Connect / read / write timeout for the unauthenticated `/health` probe.
+pub const UNAUTH_HEALTH_PROBE_MS: u64 = 800;
+
+/// Classification of the first HTTP status line from an unauthenticated `/health` GET.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnauthHealthClass {
+    Open,
+    Closed,
+    Inconclusive,
+}
+
+/// Whether `serve_start` may advertise connection strings and keep a non-loopback bind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServeAuthPolicy {
+    pub advertise: bool,
+    pub keep_bind: bool,
+}
 
 /// Tracked PID of a serve process **we** spawned.
 static TRACKED_SERVE: Mutex<Option<TrackedServe>> = Mutex::new(None);
@@ -167,6 +187,63 @@ pub fn is_non_loopback_bind(bind: &str) -> bool {
         addrs.into_iter().any(|a| !a.ip().is_loopback())
     } else {
         false
+    }
+}
+
+fn split_bind_host_port(bind: &str) -> (&str, Option<&str>) {
+    let bind = bind.trim();
+    if bind.starts_with('[') {
+        if let Some(close) = bind.find(']') {
+            let host = &bind[..=close];
+            let after = &bind[close + 1..];
+            let port = after.strip_prefix(':').filter(|p| !p.is_empty());
+            return (host, port);
+        }
+    }
+    match bind.rsplit_once(':') {
+        Some((host, port)) if !host.is_empty() && !port.is_empty() => (host, Some(port)),
+        _ => (bind, None),
+    }
+}
+
+fn rewrite_unauth_health_host(host: &str) -> String {
+    match host {
+        "0.0.0.0" => "127.0.0.1".to_string(),
+        "::" | "[::]" => "[::1]".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn rewrite_unauth_health_bind(bind: &str) -> String {
+    let (host, port) = split_bind_host_port(bind);
+    let host = rewrite_unauth_health_host(host);
+    match port {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    }
+}
+
+/// `http://{rewritten-host:port}/health` — path already includes the slash.
+pub fn unauth_health_url(bind: &str) -> String {
+    format!(
+        "http://{}{}",
+        rewrite_unauth_health_bind(bind),
+        UNAUTH_HEALTH_PATH
+    )
+}
+
+pub fn classify_unauth_health_status(status: Option<u16>) -> UnauthHealthClass {
+    match status {
+        Some(200..=299) => UnauthHealthClass::Open,
+        Some(_) => UnauthHealthClass::Closed,
+        None => UnauthHealthClass::Inconclusive,
+    }
+}
+
+pub fn serve_auth_policy(class: UnauthHealthClass, non_loopback: bool) -> ServeAuthPolicy {
+    ServeAuthPolicy {
+        advertise: class != UnauthHealthClass::Open,
+        keep_bind: !(non_loopback && class == UnauthHealthClass::Open),
     }
 }
 
@@ -476,6 +553,62 @@ pub fn port_is_open(bind: &str) -> bool {
     TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok()
 }
 
+fn parse_unauth_health_status_line(buf: &[u8]) -> Option<u16> {
+    let text = std::str::from_utf8(buf).ok()?;
+    let line = text.lines().next()?;
+    let mut parts = line.split_whitespace();
+    let version = parts.next()?;
+    if !version.starts_with("HTTP/1.") {
+        return None;
+    }
+    parts.next()?.parse().ok()
+}
+
+fn probe_unauth_health(bind: &str) -> UnauthHealthClass {
+    let url = unauth_health_url(bind);
+    let hostport = match url.strip_prefix("http://") {
+        Some(rest) => {
+            let hostport = rest.split('/').next().unwrap_or("");
+            if hostport.is_empty() {
+                return classify_unauth_health_status(None);
+            }
+            hostport.to_string()
+        }
+        None => return classify_unauth_health_status(None),
+    };
+
+    let timeout = Duration::from_millis(UNAUTH_HEALTH_PROBE_MS);
+    let Ok(mut addrs) = hostport.to_socket_addrs() else {
+        return classify_unauth_health_status(None);
+    };
+    let Some(addr) = addrs.next() else {
+        return classify_unauth_health_status(None);
+    };
+    let mut stream = match TcpStream::connect_timeout(&addr, timeout) {
+        Ok(s) => s,
+        Err(_) => return classify_unauth_health_status(None),
+    };
+    if stream.set_write_timeout(Some(timeout)).is_err()
+        || stream.set_read_timeout(Some(timeout)).is_err()
+    {
+        return classify_unauth_health_status(None);
+    }
+
+    let host = split_bind_host_port(&hostport).0;
+    let request =
+        format!("GET {UNAUTH_HEALTH_PATH} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(request.as_bytes()).is_err() {
+        return classify_unauth_health_status(None);
+    }
+
+    let mut buf = [0u8; 8192];
+    match stream.read(&mut buf) {
+        Ok(0) => classify_unauth_health_status(None),
+        Ok(n) => classify_unauth_health_status(parse_unauth_health_status_line(&buf[..n])),
+        Err(_) => classify_unauth_health_status(None),
+    }
+}
+
 pub fn build_serve_command(
     cli_path: &Path,
     bind: &str,
@@ -503,7 +636,7 @@ pub fn build_serve_command(
     crate::proxy::apply_to_std_command(&mut cmd);
     // Pass secret via environment variable GROK_SERVE_SECRET to avoid command-line secret leaks on argv.
     cmd.env("GROK_SERVE_SECRET", secret);
-    cmd.env_remove("GROK_AGENT_SECRET");
+    cmd.env("GROK_AGENT_SECRET", secret);
 
     cmd
 }
@@ -658,6 +791,43 @@ fn collect_status_sync(include_connection_secrets: bool) -> ServeStatusDto {
     }
 }
 
+fn finish_serve_start_with_probe(bind: &str) -> Result<ServeStatusDto, String> {
+    let class = probe_unauth_health(bind);
+    let policy = serve_auth_policy(class, is_non_loopback_bind(bind));
+    if !policy.keep_bind {
+        if let Ok(mut guard) = TRACKED_SERVE.lock() {
+            if let Some(t) = guard.take() {
+                tracing::info!(
+                    target: "grok_app::serve",
+                    pid = t.pid,
+                    bind = %t.bind,
+                    secret = %mask_secret(&t.secret),
+                    "stopping agent serve"
+                );
+                if pid_alive(t.pid) {
+                    kill_tracked(t.pid, t.pgid);
+                }
+            }
+        }
+        return Err(format!(
+            "Refusing unauthenticated serve on non-loopback bind `{bind}`"
+        ));
+    }
+    let mut st = if policy.advertise {
+        collect_status_sync(true)
+    } else {
+        collect_status_sync(false)
+    };
+    if class == UnauthHealthClass::Open {
+        st.connection_url = None;
+        st.connection_cli = None;
+        st.message = Some(format!(
+            "Unauthenticated HTTP GET /health succeeded on `{bind}`"
+        ));
+    }
+    Ok(st)
+}
+
 // ── Tauri commands ──────────────────────────────────────────────────────────
 
 /// Status for Settings → Runtime → Agent serve (secret always masked).
@@ -682,7 +852,12 @@ pub async fn serve_start(
         let current = collect_status_sync(false);
         if current.state == "running" && current.tracked_pid.is_some() {
             // Already our process — re-issue connection URL / CLI for copy.
-            return Ok(collect_status_sync(true));
+            let probe_bind = if current.bind.is_empty() {
+                DEFAULT_SERVE_BIND
+            } else {
+                current.bind.as_str()
+            };
+            return finish_serve_start_with_probe(probe_bind);
         }
         if !current.cli_found {
             return Err("Grok Build CLI not found".into());
@@ -765,18 +940,10 @@ pub async fn serve_start(
                 }
             }
             if port_is_open(&bind_norm) {
-                return Ok(collect_status_sync(true));
+                return finish_serve_start_with_probe(&bind_norm);
             }
             if std::time::Instant::now() >= deadline {
-                // Process still alive — report running with connection URL for copy.
-                let mut st = collect_status_sync(true);
-                if st.state == "stopped" {
-                    st.state = "running".into();
-                    st.message = Some(
-                        "Serve process spawned; waiting for port to become ready.".into(),
-                    );
-                }
-                return Ok(st);
+                return finish_serve_start_with_probe(&bind_norm);
             }
             std::thread::sleep(Duration::from_millis(SERVE_START_POLL_MS));
         }
