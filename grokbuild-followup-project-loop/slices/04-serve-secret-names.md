@@ -145,8 +145,8 @@ Observations: probe read/write timeout should map to Inconclusive; `http://{host
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Builder / draft-proposal / slice 05
-Dispatch ID / launch state / input identity: `D05-DRAFT-1` / launching / candidate `308f6af6…9b8c` (code HEAD `51330f48`), no 05 contract yet (draft)
+Worker / role / phase: none (slice shipped; advance in progress)
+Dispatch ID / launch state / input identity: none
 Pending result / last consumed dispatch: none / `D04-IMPL-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
@@ -165,14 +165,12 @@ Review events:
 - E2 / `D04-IMPL-1` / implementation / APPROVE_IMPLEMENTATION / contract `06efee0f…7869`, candidate `308f6af6…9b8c` / no gaps / counters frozen: rejections 0, no-progress 0
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
-Advance phase: archive written; next selected
-Next slice ID / draft: 05 (pending `D05-DRAFT-1`)
+Advance phase: archive pending
+Next slice ID / draft: 05
 Environment note: `cargo test` is linkable here — webkit2gtk-4.1 / gtk+-3.0 / rustc 1.98.1 stable, same as slices 02–03.
 
 ## Status
 Shipped (implementation approved `D04-IMPL-1`; code commit `51330f48`, candidate `308f6af6…9b8c`)
 
 ## Next
-Archive written and verified. SLICES Shipped includes 04; Now is 05. Dispatch `D05-DRAFT-1` (Builder draft-proposal, no code edits). After draft: replace BUILD.md with the 05 Proposed page, zero counters, plan review `D05-PLAN-1`.
-
-**Resume action:** consume or launch `D05-DRAFT-1` (Builder draft-proposal for slice 05 Honest CLI installer). Do not re-ship 01–04. Do not implement Later-outside work. Do not publish.
+Coordinator: archive this page to `slices/04-serve-secret-names.md`, add 04 to SLICES Shipped, select 05 as Now, dispatch Builder draft-proposal for 05 (no code edits), then replace BUILD.md with the 05 Proposed page.

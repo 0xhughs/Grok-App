@@ -47,23 +47,17 @@ Release review events / last consumed dispatch: none
 - 01 Restore real CI pins — C1, N7 — code commit `73193a0e`, candidate `8c79e574…341e`, implementation approval `D01-IMPL-1`; archive `slices/01-restore-real-ci-pins.md`. Note: `dtolnay/rust-toolchain` pinned to `refs/heads/stable` tip (no tag exists) — sanctioned exception; checker reports UNKNOWN_SHA when the branch moves (fail-closed).
 - 02 Deny wildcard IM senders on the live bridge — R4, N2 — code commit `fd142233`, candidate `2a3620d1…390b`, implementation approval `D02-IMPL-1`; archive `slices/02-deny-wildcard-im-senders.md`. Residual: UI/`docs` still offer `*` until slice 09; stored `"*"` ACLs fail closed on enable.
 - 03 Gate dangerous IPC — D1, N1, N10 — code commit `0aed78ab`, candidate `d72f7320…52a6`, implementation approval `D03-IMPL-1`; archive `slices/03-gate-dangerous-ipc.md`. Residual: session/composer/project policy still callable from `session-*`; React GlassModal is not a host confirm (slice 09 docs).
+- 04 Serve secret names — R7, N3 — code commit `51330f48`, candidate `308f6af6…9b8c`, implementation approval `D04-IMPL-1`; archive `slices/04-serve-secret-names.md`. Residual: official CLI has no `/health`; missing route is Inconclusive (advertise + keep, including non-loopback).
 
 ## Now
-### 04 Serve secret names
-Goal: Child serve gets `GROK_AGENT_SECRET` and `GROK_SERVE_SECRET`. `--secret` stays off argv. Non-loopback advertise only after an unauthenticated probe fails.
-Provides: R7, N3
-Depends on: 01
-Target membership: inside
-Out: Changing official CLI source.
-
-## Later
-
 ### 05 Honest CLI installer
 Goal: `KNOWN_CLI_HASHES` is generated from real downloads or removed. First-seen hash change is a hard error with UI override. Hash store is 0600.
 Provides: C2, N8
 Depends on: 01
 Target membership: inside
 Out: Hosting a new artifact bucket.
+
+## Later
 
 ### 06 Restrict leftover headless children
 Goal: `session_title`, `agent_workflows`, `streaming_messages_json` get `--no-subagents --disallowed-tools`, pinned cwd, and `--always-approve` only from the invoking session’s policy. Batch uses that session, not `sessions.first()`.
