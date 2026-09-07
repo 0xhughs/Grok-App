@@ -182,7 +182,7 @@ Review events:
 - E2 / `D06-IMPL-1` / implementation / APPROVE_IMPLEMENTATION / contract `fa773d0f…bdff`, candidate `f19f791b…f59c` / no gaps / counters frozen: rejections 0, no-progress 0
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: if interrupted before `D07-DRAFT-1` returns, re-dispatch `D07-DRAFT-1` (proposal only, no code). Do not publish.
-Advance phase: archive pending then next selected
+Advance phase: archive written; next selected
 Next slice ID / draft: 07 (`D07-DRAFT-1` launching)
 Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–05.
 
