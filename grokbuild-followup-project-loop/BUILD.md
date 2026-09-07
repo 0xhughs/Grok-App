@@ -101,16 +101,22 @@ Grep:
 none (Proposed; draft `D05-DRAFT-1` produced this page, no code)
 
 ## Review
-Plan approval: none
+Plan approval: `D05-PLAN-1` APPROVE_PLAN — reviewer `bc-f5f71d69-183d-5d4f-895f-e0cf212086f2`, contract `05d3fd9c…fdf8`, candidate `308f6af6…9b8c`.
 Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
+
+### D05-PLAN-1 — APPROVE_PLAN (recorded verbatim summary)
+Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-f5f71d69-183d-5d4f-895f-e0cf212086f2`, worktree `/tmp/loop-review/D05-PLAN-1` @ `b37a59e0`.
+Contract `05d3fd9c…fdf8` (match). Candidate before/after `308f6af6…9b8c` (unchanged, clean-tree). Porcelain empty. Code vs `51330f48` empty.
+Judgments: (a) remove-table within authority (Goal “or removed”; sidecars 404; table ≠ live 0.2.111; stable 1.0.13); (b) first-seen hard error + 0600 + no slice 07 leak; (c) reuse allow-unverified + `checksum_missing` tokens is kind collapse not a host lie (Files=1); (d) tests/greps satisfiable; (e) one slice. No blockers.
+Observations: `rg FirstSeenStatus::Changed` will not hit the enum variant line (`Changed {`); Proof should list uses. Error strings ≥280 chars drop Setup detail. `session_p1.rs` comment will be stale (Files=1).
 
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Reviewer / plan review / slice 05
-Dispatch ID / launch state / input identity: `D05-PLAN-1` / launching / candidate `308f6af6…9b8c` (code HEAD `51330f48`), contract `05d3fd9c…fdf8`, draft `D05-DRAFT-1`
-Pending result / last consumed dispatch: none / `D05-DRAFT-1`
+Worker / role / phase: Builder / implementation / slice 05
+Dispatch ID / launch state / input identity: `D05-BUILD-1` / launching / candidate `308f6af6…9b8c` (code HEAD `51330f48`), contract `05d3fd9c…fdf8`, plan approval `D05-PLAN-1`
+Pending result / last consumed dispatch: none / `D05-PLAN-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -123,7 +129,8 @@ Rejection count: 0
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none
 Repair awaiting review: false
-Review events: none
+Review events:
+- E1 / `D05-PLAN-1` / plan / APPROVE_PLAN / contract `05d3fd9c…fdf8`, candidate `308f6af6…9b8c` / no gaps / rejection count 0
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
 Advance phase: next selected (05); BUILD replaced with Proposed page
@@ -131,9 +138,9 @@ Next slice ID / draft: 06 (after 05 ships)
 Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–04.
 
 ## Status
-Proposed (draft `D05-DRAFT-1`; pending `D05-PLAN-1`)
+Building (plan approved `D05-PLAN-1`; pending `D05-BUILD-1`)
 
 ## Next
-Independent plan review `D05-PLAN-1` in isolated worktree. On APPROVE_PLAN → Not started, Builder `D05-BUILD-1`. On REJECT_PLAN → Proposed, Builder revises.
+Builder implements the approved contract in `/workspace`. On proof → Ready for review `D05-IMPL-1`. Do not rustfmt-rewrite dirty `cli_install.rs`. Proof lists `FirstSeenStatus::Changed` uses (enum line is `Changed {`, not that token). Keep `first_seen_change_error` under 280 chars so Setup keeps `detail`.
 
-**Resume action:** consume or launch `D05-PLAN-1` (Reviewer plan review for slice 05). Do not re-ship 01–04. Do not implement Later-outside work. Do not publish.
+**Resume action:** consume or launch `D05-BUILD-1` (Builder implementation for slice 05). Do not re-ship 01–04. Do not implement Later-outside work. Do not publish.
