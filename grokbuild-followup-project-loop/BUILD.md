@@ -1,178 +1,139 @@
 # BUILD.md
 
-Slice: 04 Serve secret names
-Archive: slices/04-serve-secret-names.md
+Slice: 05 Honest CLI installer
+Archive: slices/05-honest-cli-installer.md
 
 ## Goal
-The app-spawned `grok agent serve` child receives the same secret under **both** `GROK_AGENT_SECRET` and `GROK_SERVE_SECRET`. `--secret` and the token stay off argv (`ps` cannot read them). After the child is listening, an **unauthenticated** HTTP GET to `/health` on the bind runs; if that request returns 2xx, the start path **does not** populate `connection_url` / `connection_cli`. A non-loopback bind is kept only when that unauthenticated GET is **not** 2xx; if it is 2xx the tracked child is killed and `serve_start` returns `Err`. Missing `/health` (connect fail / non-HTTP) is **Inconclusive**, not Open — it does not kill bind (official CLI does not document `/health`; requiring `Closed` would break LAN serve). Slice 03 `serve_start` main-only gate stays. Ask stays default.
+`KNOWN_CLI_HASHES` is **removed** (not regenerated). With no published sidecar, trust is TOFU: first digest is recorded; a later different digest is a **hard error** unless the existing UI/env override is on. The first-seen hash store is written **0600**. Published-sidecar mismatch still always aborts. `GROK_CLI_REQUIRE_CHECKSUM` stays opt-in. Ask stays default.
 
 ## Done when
-**Pick (only this, not a menu):** **Unauthenticated HTTP/1.1 GET `/health`** over a direct `TcpStream` to the bind (no reqwest, no proxy, no new crate). No secret is sent. Classify the first status line; drive advertise + non-loopback keep/kill from that class. Rejected: authenticated `/health`, WebSocket `/ws` upgrade probe, `serve_tcp_probe` reuse as the auth gate.
+**Pick (only this, not a menu): remove the known-good table.** Do not generate a replacement table, do not commit a generator, do not check in `KNOWN_CLI_HASHES.sha256`, do not download-and-pin current stable `1.0.13` (or any other version) as a new baked list.
 
-Official Grok Build documents `GROK_AGENT_SECRET` / `--secret` and `ws://{bind}/ws?server-key=…`. This repo and that user-guide do **not** document an HTTP `/health` on `grok agent serve`. The probe target is still `/health` so the slice is observable; live CLI without that route is Inconclusive (not 2xx). Residual recorded.
+Locked C2: no fabricated known-good table; first-seen change is a hard error with UI override. Live evidence (`D05-DRAFT-1`; not invented):
 
-### R7 — both env names, `--secret` off argv
-- `build_serve_command` (`src-tauri/src/serve.rs:479–509` today) sets **both**:
-  - `cmd.env("GROK_SERVE_SECRET", secret);`
-  - `cmd.env("GROK_AGENT_SECRET", secret);`
-- Delete `cmd.env_remove("GROK_AGENT_SECRET");` (`:506` today). Do not replace it with another remove of that name.
-- Do not add `.arg("--secret")` or the token to argv. Existing `--bind` / optional `--remote` argv stays.
-- `build_connection_cli` / `build_connection_cli_masked` (`:189–206`) stay `GROK_SERVE_SECRET=… grok --remote ws://…` (no `--secret`). Child env is the R7 fix; the copy-paste hint is not rewritten.
-- Grep (cwd `/workspace`, Proof records `-n` listings):
-  - `rg -n 'env_remove\("GROK_AGENT_SECRET"\)' src-tauri/src/` → **0**
-  - `rg -n 'cmd\.env\("GROK_AGENT_SECRET"' src-tauri/src/serve.rs` → **exactly 1** (inside `build_serve_command`)
-  - `rg -n 'cmd\.env\("GROK_SERVE_SECRET"' src-tauri/src/serve.rs` → **exactly 1** (inside `build_serve_command`)
-  - `rg -n '\.arg\("--secret"\)' src-tauri/src/serve.rs` → **0**
-  - `rg -n 'require_main_window_label' src-tauri/src/serve.rs` → **exactly 1**, the existing call at today’s `:680`, **before** `spawn_blocking`. Do not move it inside the blocking closure; do not drop `window: tauri::Window`.
+| What | URL | Result |
+|---|---|---|
+| stable pointer | `GET https://storage.googleapis.com/grok-build-public-artifacts/cli/stable` | `200` body `1.0.13` |
+| sidecar candidates on both mirrors | HEAD `*.sha256` / `SHA256SUMS` / etc. | all **404** |
+| table pin `grok-0.2.111-linux-x86_64` | in-tree `cli_install.rs:92–94` | `c903e1fa07d52436…` |
+| same artifact | `GET …/cli/grok-0.2.111-linux-x86_64` | `f158d0d43367c395…` (**≠ table**; matches audit N8) |
 
-### N3 — post-start unauthenticated `/health` probe
-**Named types / fns** (`pub` or `pub(crate)` in `serve.rs`; tests in the same `mod tests` via `include!("serve_tests_ext.rs")`):
-- `pub const UNAUTH_HEALTH_PATH: &str = "/health";`
-- `pub const UNAUTH_HEALTH_PROBE_MS: u64 = 800;`
-- `pub enum UnauthHealthClass { Open, Closed, Inconclusive }`
-- `pub fn unauth_health_url(bind: &str) -> String` — `http://{host}/{path}` with path `UNAUTH_HEALTH_PATH`. Host rewrite: bind host `0.0.0.0` → `127.0.0.1`; `::` / `[::]` → `[::1]`; other hosts unchanged (keep IPv6 brackets). No query string.
-- `pub fn classify_unauth_health_status(status: Option<u16>) -> UnauthHealthClass` — `Some(200..=299)` → `Open`; `Some(other)` → `Closed`; `None` → `Inconclusive`.
-- `pub fn serve_auth_policy(class: UnauthHealthClass, non_loopback: bool) -> ServeAuthPolicy` where `ServeAuthPolicy { advertise: bool, keep_bind: bool }`:
-  - `advertise` is `false` iff `class == Open`
-  - `keep_bind` is `false` iff `non_loopback && class == Open`
-- `fn probe_unauth_health(bind: &str) -> UnauthHealthClass` (same module; `pub(crate)` ok):
-  1. Build URL via `unauth_health_url`.
-  2. `TcpStream::connect_timeout` to the rewritten host:port, timeout `UNAUTH_HEALTH_PROBE_MS`. Do **not** use `crate::proxy::apply_to_*`. Do **not** use reqwest.
-  3. Write only:
-     `GET /health HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n`
-     Path is exactly `/health`. No `Authorization`, `Cookie`, `server-key`, `GROK_AGENT_SECRET`, `GROK_SERVE_SECRET`, or query.
-  4. Read ≤ 8192 bytes. Parse the first line as `HTTP/1.x <code>`. Missing/unparseable/timeout/connect-fail → `classify_unauth_health_status(None)`.
-- `fn finish_serve_start_with_probe(bind: &str) -> Result<ServeStatusDto, String>`:
-  1. `class = probe_unauth_health(bind)`
-  2. `policy = serve_auth_policy(class, is_non_loopback_bind(bind))`
-  3. If `!policy.keep_bind`: take/kill `TRACKED_SERVE` (same kill path as `serve_stop`’s tracked take), return `Err` whose text contains `unauthenticated` and `non-loopback` and does **not** contain the secret or `--secret`.
-  4. `st = collect_status_sync(policy.advertise)`
-  5. If `class == Open`: force `st.connection_url = None`, `st.connection_cli = None`, set `st.message` to a host string containing `unauthenticated` (no secret).
-  6. `Ok(st)`
+Install resolves `CHANNEL = "stable"` → **1.0.13 today**. The table only lists 0.2.100/110/111 and cannot protect current stable.
 
-**Wire into `serve_start` only** (today `:674–786`). Replace every `collect_status_sync(true)` in that command (today `:685` already-running re-issue, `:768` port-open success, `:772` deadline still-alive) with `finish_serve_start_with_probe(&bind_norm)` — for the re-issue arm use the tracked/current bind (same string `collect_status_sync` would use; default `DEFAULT_SERVE_BIND` if somehow missing). Do **not** call `probe_unauth_health` from `serve_status` / `collect_status_sync(false)` / `serve_tcp_probe` / `serve_stop`.
+### C2 — delete fabricated table
+- Delete `KNOWN_CLI_HASHES` (`cli_install.rs:81–157`), `lookup_known_cli_hash` (`:161–171`), and `is_known_cli_hash` (`:174–181`).
+- In `install_cli_latest` (`:944–987`), delete the `is_known_cli_hash` / `lookup_known_cli_hash` arms (`:958–965`). After a published sidecar `None`, every artifact goes through first-seen (then the existing missing-sidecar `require_published_checksum` gate). Sidecar `Some` + digest mismatch still `Err` and deletes the temp file (`:948–952`). No override on sidecar mismatch.
+- Delete test `known_cli_hash_lookup_and_verification` (`:1199–1226`).
+- Grep (cwd `/workspace`, Proof lists `-n`):
+  - `rg -n 'KNOWN_CLI_HASHES|lookup_known_cli_hash|is_known_cli_hash' src-tauri/src` → **0**
+  - `rg -n 'c903e1fa07d52436|a7f1c9d8e5b30214|fabricated' src-tauri/src/cli_install.rs` → **0**
 
-`serve_start` still: `window: tauri::Window` → `require_main_window_label(&caller)?` → `spawn_blocking`. Gate before any spawn/mutate. `#[tauri::command]` count across `src-tauri/src` stays **423**.
+### N8 — first-seen change is a hard error; store 0600; existing UI override
+- Keep `FirstSeenStatus` (`:185–189`): `RecordedNew` | `MatchedExisting` | `Changed { previous, current }`.
+- `pub fn check_or_update_first_seen_hash_in_file` (`:205–271`): on `None` → insert + write + `RecordedNew`; on case-insensitive match → `MatchedExisting` (no write); on **Changed → return `Changed` and do not write** (today `:253` overwrites and `:261–267` persists the new hash — that is the bug). Write failures on `RecordedNew` are `Err`, not `let _ =`.
+- `pub fn accept_first_seen_hash_in_file(store_path, artifact_name, hash) -> Result<(), String>` — overwrite that key and write 0600. Only the override path calls this.
+- `fn write_hash_store_0600(path, bytes)` (same module): Unix `OpenOptions` create/truncate `.mode(0o600)` + `set_permissions(0o600)` (same pattern as `agent_home_config.rs:587–595`). Non-Unix: `fs::write`. Do **not** edit `agent_home_config.rs` (slice 07). Do **not** route `~/.grok/first_seen_hashes.json` through `write_private_agent_home_file`.
+- `pub enum FirstSeenGate { ProceedUnverified, RefuseChanged { previous: String, current: String }, AcceptedChange }`
+- `pub fn first_seen_install_gate(status: FirstSeenStatus, allow_unverified: bool) -> FirstSeenGate`:
+  - `RecordedNew` | `MatchedExisting` → `ProceedUnverified`
+  - `Changed` && `allow_unverified` → `AcceptedChange`
+  - `Changed` && `env_flag_truthy("GROK_CLI_ALLOW_UNVERIFIED")` → `AcceptedChange`
+  - else `Changed` → `RefuseChanged`
+- `pub fn first_seen_change_error(artifact_name, previous, current) -> String` must contain all of: `first-seen hash changed`, the artifact name, `previous=`, `current=`, `Allow unverified CLI install`, `GROK_CLI_ALLOW_UNVERIFIED`, and `No published SHA-256`. Must **not** contain `SHA-256 mismatch` / `checksum mismatch` or `GROK_CLI_REQUIRE_CHECKSUM`.
+
+**Wire into `install_cli_latest` only**, sidecar-`None` branch (today `:957–985`). Replace `let _ = verify_or_record_first_seen_hash(...)` (`:968`) with:
+1. `status = verify_or_record_first_seen_hash(&artifact_name, &digest)?`
+2. `match first_seen_install_gate(status, allow_unverified)` — `RefuseChanged` → remove temp + `Err(first_seen_change_error)`; `AcceptedChange` → `accept_first_seen_hash_in_file` then continue; `ProceedUnverified` → continue
+3. Existing `require_published_checksum(allow_unverified)` missing-sidecar refuse (`:971–978`) unchanged.
+
+**UI override (reuse, do not add a setting):** `allow_unverified_cli_install` (default false). No new Settings key, no i18n, no `App.tsx` state, no `window.confirm`.
+
+**Do not** default `GROK_CLI_REQUIRE_CHECKSUM` on. `require_checksum_policy_default_and_strict_env` stays.
+
+**Named tests** in `cli_install.rs` `mod tests` (names normative):
+- `first_seen_hashes_recording_and_warning_on_change` — **flip**: after `Changed` for `h2`, the file still contains `h1` and a follow-up `check_or_update` with `h2` is still `Changed`.
+- `first_seen_install_gate_refuses_change_without_override`
+- `first_seen_accept_change_writes_new_hash`
+- `first_seen_store_mode_0600` (`#[cfg(unix)]`)
+- `first_seen_change_error_lists_override_and_avoids_mismatch_classifier`
+
+`#[tauri::command]` count stays **423**. No file outside Files changes.
 
 Grep:
-- `rg -n 'collect_status_sync\(true\)' src-tauri/src/serve.rs` → **exactly 1**, inside `finish_serve_start_with_probe` (not inlined in the three former arms).
-- `rg -n 'probe_unauth_health' src-tauri/src/serve.rs` → the `fn` plus the call inside `finish_serve_start_with_probe` (and tests may sit in `serve_tests_ext.rs`, which this pattern also matches if `rg` hits the include file — Proof lists each line’s function). Zero matches in `serve_tcp_probe` / `serve_status` / `serve_stop`.
-- `rg -n 'UNAUTH_HEALTH_PATH' src-tauri/src/serve.rs src-tauri/src/serve_tests_ext.rs` ≥ 2 (const + URL builder and/or probe write).
-
-**Named tests** in `serve_tests_ext.rs` `mod tests` (names normative):
-- `spawn_serve_process_passes_secret_via_env` (existing, `:206`) — argv still has no `--secret` and no token; `envs.get("GROK_SERVE_SECRET")` **and** `envs.get("GROK_AGENT_SECRET")` are both `Some(&Some("sekrit-token-123".to_string()))`. This is the audit accept-when “both env names present, `--secret` absent”.
-- `classify_unauth_health_status_matrix` — `Some(200)` / `Some(204)` → `Open`; `Some(401)` / `Some(403)` / `Some(404)` / `Some(500)` → `Closed`; `None` → `Inconclusive`. `serve_auth_policy(Open, false).advertise == false` and `.keep_bind == true`; `serve_auth_policy(Open, true).keep_bind == false`; `Closed`/`Inconclusive` × `{false,true}` → `advertise == true` and `keep_bind == true`.
-- `unauth_health_url_rewrites_unspecified_and_keeps_loopback` — `unauth_health_url("127.0.0.1:2419") == "http://127.0.0.1:2419/health"`; `"0.0.0.0:2419"` → `http://127.0.0.1:2419/health`; `"[::1]:2419"` contains `/health` and `[::1]`; `"0.0.0.0:2419"` / `"::"`-form has **no** query (`?` absent).
-- `unauth_health_probe_open_refuses_advertise` — `std::net::TcpListener::bind("127.0.0.1:0")` thread replies `HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n`; `probe_unauth_health` → `Open`; `serve_auth_policy(Open, false).advertise == false`.
-- `unauth_health_probe_closed_allows_advertise` — same fake server with `401 Unauthorized`; class `Closed`; `advertise == true`; `keep_bind == true` even when `non_loopback` is true.
-- `unauth_health_probe_sends_no_secret` — fake server records the first request; it contains `GET /health`; it does **not** contain `server-key`, `Authorization`, `Cookie`, `GROK_AGENT_SECRET`, `GROK_SERVE_SECRET`, or `--secret`.
-
-Existing tests still pass, including `build_connection_cli_template_and_mask` (still `GROK_SERVE_SECRET=` and no `--secret`) and `normalize_bind_detects_non_loopback`.
-
-No file outside Files changes.
+- `rg -n 'fn write_hash_store_0600|fn accept_first_seen_hash_in_file|fn first_seen_install_gate|fn first_seen_change_error' src-tauri/src/cli_install.rs` — each present.
+- `rg -n 'fs::write\(store_path' src-tauri/src/cli_install.rs` → **0**
+- `rg -n 'FirstSeenStatus::Changed' src-tauri/src/cli_install.rs` — enum, no-write arm, gate, tests (Proof lists each).
 
 ## Out
-- Changing official CLI source (Out of Now 04). Do not add a `/health` handler to Grok Build.
+- Hosting a new artifact bucket. Do not upload, mirror, or commit CLI binaries or a new checksum host.
+- Regenerating `KNOWN_CLI_HASHES` from downloads; adding a generator; checking in `KNOWN_CLI_HASHES.sha256`.
+- Inventing or baking measured `1.0.13` / `0.2.111` hashes as a new known-good table.
 - Held IDs. Do not reopen P1, P3, P4, P5, R1, R2, R3, R5, R6, S1, S3, C3, D1–D6.
-- Undoing slice 03: `serve_start` stays main-only via `require_main_window_label`. Do not edit capability JSON. Command count stays 423.
-- Authenticated health (secret query/header), WebSocket `/ws` upgrade probe, probing `--remote` upstream.
-- Rewriting `build_connection_cli` to advertise `GROK_AGENT_SECRET=` or both names; rewriting `src/lib/serveConnect.ts` `grokRemote` (`--secret` examples). Residual for docs / later.
-- Frontend / i18n / `LeaderServePanel` / `SdkConnectWizard`. Omitting `connectionUrl` already skips clipboard (`LeaderServePanel.tsx:198–199`).
-- Gating `serve_stop`, `serve_status`, `serve_tcp_probe`. Changing default bind. Widening `allow_from`. Disabling parent-session Grok subagents. Publishing / deploying.
-- rustfmt/clippy baseline fixes (see Constraints). Do not rustfmt-rewrite pre-existing dirt in `serve.rs` beyond required hunks. Do not rustfmt-rewrite untouched pre-existing dirt in `serve_tests_ext.rs` unless that test is edited.
-- Slices 05–09.
+- Defaulting `GROK_CLI_REQUIRE_CHECKSUM` on / changing `store.rs` defaults / new Settings keys / i18n / `settingsCatalog` / docs (slice 09).
+- Overriding published-sidecar mismatch. Changing `MIRROR_BASES`. Widening `allow_from`. Disabling parent-session Grok subagents.
+- Editing `agent_home_config.rs` (slice 07).
+- Frontend / Setup wizard new error kinds (reuse existing `checksum_missing` via required error tokens).
+- rustfmt-rewrite of pre-existing dirt in `cli_install.rs`. Slices 06–09. Publishing / deploying.
 
 ## Constraints
-- **Files:** `src-tauri/src/serve.rs`, `src-tauri/src/serve_tests_ext.rs`. No other file. No `Cargo.toml` / `Cargo.lock`. No `src/`, i18n, docs, capabilities, `lib.rs`.
-- Ask remains default. Do not change `store.rs` defaults. Do not rewrite stored settings.
-- Do not add crates. Probe is std `TcpStream` + `TcpListener` in tests. `reqwest` stays unused here.
-- Direct connect only — no `proxy::apply_to_reqwest` / `apply_to_std_command` on the probe socket (child spawn still uses existing `apply_to_std_command` for `--remote`).
-- Rust style: new/changed hunks rustfmt-clean. **Do not rustfmt-rewrite pre-existing dirt** in `serve.rs` (already on the slice 02/03 dirty list). rustfmt/clippy non-regression vs that baseline (rustc 1.98.1): `cargo fmt --all -- --check` still exits 1 with diffs **only** in the same 16 files (`agent_home_config.rs`, `batch_agents.rs`, `cli_install.rs`, `cli_update.rs`, `mirror/mod.rs`, `mirror/rpc.rs`, `models_aux.rs`, `official_aux.rs`, `path_scope.rs`, `permission.rs`, `relay_stream_proxy.rs`, `secrets.rs`, `serve.rs`, `session_manager/control.rs`, `store.rs`, `wallpaper_source.rs`). `serve_tests_ext.rs` is `include!`d; if it is already rustfmt-dirty, do not expand those hunks; new tests fmt-clean. `cargo clippy --all-targets -- -D warnings` still exactly `batch_agents.rs:79` (`unnecessary_map_or`), `path_scope.rs:129` (`manual_contains`), `wecom.rs:210` (`too_many_arguments`). Do not fix those here.
+- **Files:** `src-tauri/src/cli_install.rs` only. No `Cargo.toml` / `Cargo.lock`. No `src/`, i18n, docs, capabilities, `lib.rs`, `session_p1.rs`, `store.rs`, `cli_update.rs`, `agent_home_config.rs`.
+- Ask remains default. Do not change `store.rs` defaults.
+- Do not add crates. Do not add network to unit tests (temp-dir store only).
+- Rust style: new/changed hunks rustfmt-clean. **Do not rustfmt-rewrite pre-existing dirt** in `cli_install.rs` (already on the 16-file dirty list). rustfmt/clippy non-regression vs rustc 1.98.1 baseline: `cargo fmt --all -- --check` still exits 1 with diffs **only** in the same 16 files; `cargo clippy --all-targets -- -D warnings` still exactly `batch_agents.rs:79`, `path_scope.rs:129`, `wecom.rs:210`.
 - Do not claim cargo passed unless that session ran it.
 
 ## Data / state impact
-- No settings / secret-store migration. `TRACKED_SERVE` still holds the full secret in memory for mask/stop.
-- Loopback + `Open`: process stays; full connection strings omitted; UI does not auto-copy (`if (st.connectionUrl)`).
-- Non-loopback + `Open`: process killed; start errors; bind is not left up.
-- `Closed` / `Inconclusive` (typical CLI with no `/health`): advertise and keep-bind unchanged from today’s TCP-ready start, including non-loopback (still `warn!` + `exposure_warning`). Residual: secretless WebSocket on LAN is undetected if `/health` is absent.
-- `serve_status` polls still omit full `connection_url` / `connection_cli`; `connection_cli_masked` last-4 unchanged.
-- Main-window `invoke("serve_start")` args unchanged (`Window` injected).
+- No settings / secret-store migration. `allow_unverified_cli_install` default stays **false**.
+- `~/.grok/first_seen_hashes.json`: new keys recorded at 0600; a digest change does **not** replace the stored hash unless Settings / `GROK_CLI_ALLOW_UNVERIFIED` / `cli_install_latest({allowUnverified:true})` accepted the change.
+- First install of current stable (or any un-sidecared artifact): `RecordedNew`, install continues (unless `GROK_CLI_REQUIRE_CHECKSUM=1` without override).
+- Re-install with a different digest for the same artifact name: hard `Err`, temp file removed, previous hash kept.
+- Sidecar present + match: `checksum_verified: true`; first-seen not consulted.
+- IPC `cli_install_latest` args unchanged.
 
 ## Tests
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib serve::tests` — existing tests plus the five new names above; `spawn_serve_process_passes_secret_via_env` asserts both env names; `0 failed`.
-- Negative proof: Proof includes today’s `rg -n 'env_remove\("GROK_AGENT_SECRET"\)' src-tauri/src/serve.rs` (line `:506`) and a sentence that pre-change `envs.get("GROK_AGENT_SECRET")` is absent/`None` (the command **removes** it). After change that pattern is 0 and both env keys are `Some(token)`.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib cli_install::tests` — existing tests minus deleted table test, plus the four new names and the flipped first-seen test; `0 failed`.
 - Grep criteria in Done when; each listing + count in Proof.
-- Lint non-regression: dirty set identical to the 16-file baseline (including still-dirty `serve.rs`); clippy exactly the three baseline lints, none introduced in Files.
-- Scope: `git diff --stat` vs the 04 implementation baseline lists exactly the two Files.
-- No `pnpm vitest` (no TS change). Implementation Proof runs `serve::tests` above. Full `cd src-tauri && cargo test` is required in implementation Proof (webkit2gtk present); expected `0 failed`.
+- Lint non-regression: dirty set identical to the 16-file baseline; clippy exactly the three baseline lints.
+- Scope: `git diff --stat` vs the 05 implementation baseline lists exactly `src-tauri/src/cli_install.rs`.
+- No `pnpm vitest`. Implementation Proof runs `cli_install::tests`. Full `cd src-tauri && cargo test` required; expected `0 failed` (or the same pre-existing parallel flake outside Files as slice 04, with serial `--test-threads=1` green).
 
 ## Proof
-Builder `D04-BUILD-1` (agent `bc-23bd0c93-80a3-5bdc-abb9-277c24bbd4f5`), implemented in `/workspace` at HEAD `05d0c008`, committed by coordinator as `51330f48` (code-only). Candidate identity (clean-tree) `308f6af69624dcd1d62d764a64074687d5ba65f24b00db68ff4847e7ec739b8c`. Changed paths: exactly `src-tauri/src/serve.rs` (+191/−12), `src-tauri/src/serve_tests_ext.rs` (+131). Rust `rustc 1.98.1`. Logs under `/tmp/build04/`. Command count 423.
-
-Implementation: `build_serve_command` sets both env names; `env_remove` deleted. Probe is std `TcpStream` GET `/health` (800 ms timeouts → Inconclusive). `0.0.0.0`→`127.0.0.1`; `::`/`[::]`→`[::1]`. `serve_start` re-issue / port-open / deadline arms call `finish_serve_start_with_probe`. Slice 03 gate kept (`:850` before `spawn_blocking`). `--secret` off argv. Copy-paste CLI still `GROK_SERVE_SECRET=`.
-
-### Done when → evidence
-- `rg env_remove("GROK_AGENT_SECRET")` → 0. `cmd.env("GROK_AGENT_SECRET"` / `GROK_SERVE_SECRET` → exactly 1 each (`:639`, `:638`) inside `build_serve_command`. `.arg("--secret")` → 0.
-- `require_main_window_label` → exactly 1 at `:850` before `spawn_blocking`.
-- `collect_status_sync(true)` → exactly 1, inside `finish_serve_start_with_probe` (`:817`).
-- `probe_unauth_health` in `serve.rs`: `fn` `:567` + call `:795`. Tests in `serve_tests_ext.rs` `:310`/`:329`/`:353`. Zero in `serve_tcp_probe` / `serve_status` / `serve_stop`.
-- `UNAUTH_HEALTH_PATH` → 3 (const + URL builder + GET write).
-- Named tests present (below). Negative: pre-change `:506` `env_remove`; `GROK_AGENT_SECRET` was removed.
-
-### Tests → evidence
-- `serve::tests`: `ok. 18 passed; 0 failed` (exit 0). Includes the five new names plus flipped spawn test.
-- Full `cd src-tauri && cargo test` (parallel): exit 101, `1653 passed; 1 failed` — only `commands::terminal_tests::terminal_pty_spawn_rejects_untrusted_project_path` (`store::save_projects` race, outside Files). Isolated retry of that test exit 0. Serial `--test-threads=1`: `ok. 1654 passed; 0 failed; 1 ignored` (exit 0). 1654 = slice-03 1649 + 5 new.
-- Lint: `cargo fmt --all -- --check` exit 1, same 16-file dirty set (`serve.rs` remaining hunk is pre-existing `arg("agent")` chain). Clippy non-fatal exit 0 / 3 warnings; `-D warnings` exit 101 at the three baseline sites.
-
-Caveats: official CLI has no `/health` → typical start is Inconclusive (advertise + keep). Parallel full-suite flake is pre-existing and outside Files.
+none (Proposed; draft `D05-DRAFT-1` produced this page, no code)
 
 ## Review
-Plan approval: `D04-PLAN-1` APPROVE_PLAN — reviewer `bc-32f2b77e-b62c-5c5d-97a1-21bd46c9a2ec`, contract `06efee0f…7869`, candidate `d72f7320…52a6`.
-Implementation approval: `D04-IMPL-1` APPROVE_IMPLEMENTATION — reviewer `bc-758e5cbb-3958-5087-9569-4e025e7b7411`, contract `06efee0f…7869`, candidate `308f6af6…9b8c` (code HEAD `51330f48`). Coordinator recomputed identities at consume time: `/workspace` and `/tmp/loop-review/D04-IMPL-1` both HEAD `c6da6540`, CANDIDATE `308f6af6…9b8c` / CONTRACT `06efee0f…7869` / MODE=clean-tree. Counters frozen at 0/0.
+Plan approval: none
+Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
-
-### D04-IMPL-1 — APPROVE_IMPLEMENTATION (recorded verbatim summary)
-Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-758e5cbb-3958-5087-9569-4e025e7b7411`, worktree `/tmp/loop-review/D04-IMPL-1` @ `c6da6540`.
-Contract `06efee0f…7869` (match). Candidate before/after `308f6af6…9b8c` (unchanged, clean-tree). Porcelain empty. Scope vs `0aed78ab`: exactly `serve.rs` + `serve_tests_ext.rs`.
-Every Done when and Tests bullet remapped: both env names; `env_remove` 0; `--secret` 0; slice 03 gate `:850` before `spawn_blocking`; probe GET `/health` no secret, timeout→Inconclusive; three start arms wired; kill path + Err text; greps match. `serve::tests` 18/0. Parallel full suite 1653/1 only on `terminal_pty_spawn_rejects_untrusted_project_path` (outside Files, isolated ok). Lint 16/3 baseline. No blockers.
-
-### D04-PLAN-1 — APPROVE_PLAN (recorded verbatim summary)
-Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-32f2b77e-b62c-5c5d-97a1-21bd46c9a2ec`, worktree `/tmp/loop-review/D04-PLAN-1` @ `9d01adc6`.
-Contract `06efee0f…7869` (match). Candidate before/after `d72f7320…52a6` (unchanged, clean-tree). Porcelain empty. Code vs `0aed78ab` empty.
-Judgments: (a) both-env R7 matches locked decision; (b) Inconclusive=keep-bind is within authority (official CLI has no `/health`; requiring Closed would break LAN serve and contradict Out); (c) unauth GET `/health` via TcpStream is one coherent design; (d) tests/greps satisfiable; (e) one slice, Files=2, 423 commands, lint baseline intact. No blockers.
-Observations: probe read/write timeout should map to Inconclusive; `http://{host}/{path}` prose vs single-slash test (test is normative).
 
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Builder / draft-proposal / slice 05
-Dispatch ID / launch state / input identity: `D05-DRAFT-1` / launching / candidate `308f6af6…9b8c` (code HEAD `51330f48`), no 05 contract yet (draft)
-Pending result / last consumed dispatch: none / `D04-IMPL-1`
+Worker / role / phase: Reviewer / plan review / slice 05
+Dispatch ID / launch state / input identity: `D05-PLAN-1` / launching / candidate `308f6af6…9b8c` (code HEAD `51330f48`), contract pending recompute, draft `D05-DRAFT-1`
+Pending result / last consumed dispatch: none / `D05-DRAFT-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
-- Coverage: entire tracked tree outside the pack dir (source, tests, `.github/workflows/`, `scripts/`, lockfiles, docs, capabilities, assets).
-- Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/` (protocol + artifacts).
-Baseline snapshot: slice 03 shipped candidate — HEAD `0aed78abe79def986d98b7594a7625a334df8cc0` (code), clean-tree, CANDIDATE `d72f73209511cb4cae63933103c68287a8fabe2b8b64cbdc522a465f368252a6`
-Contract identity: `06efee0f18fe84a7bc576b708802f0fb726f8b787af66e68304841c362ed7869`
+- Coverage: entire tracked tree outside the pack dir.
+- Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/`.
+Baseline snapshot: slice 04 shipped candidate — HEAD `51330f4874b96679d104da58914f84c3b529960b` (code), clean-tree, CANDIDATE `308f6af69624dcd1d62d764a64074687d5ba65f24b00db68ff4847e7ec739b8c`
+Contract identity: (recompute after commit)
 Candidate snapshot: HEAD `51330f4874b96679d104da58914f84c3b529960b` (code commit), clean-tree, CANDIDATE `308f6af69624dcd1d62d764a64074687d5ba65f24b00db68ff4847e7ec739b8c`
 Rejection count: 0
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none
 Repair awaiting review: false
-Review events:
-- E1 / `D04-PLAN-1` / plan / APPROVE_PLAN / contract `06efee0f…7869`, candidate `d72f7320…52a6` / no gaps / rejection count 0
-- E2 / `D04-IMPL-1` / implementation / APPROVE_IMPLEMENTATION / contract `06efee0f…7869`, candidate `308f6af6…9b8c` / no gaps / counters frozen: rejections 0, no-progress 0
+Review events: none
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
-Advance phase: archive written; next selected
-Next slice ID / draft: 05 (pending `D05-DRAFT-1`)
-Environment note: `cargo test` is linkable here — webkit2gtk-4.1 / gtk+-3.0 / rustc 1.98.1 stable, same as slices 02–03.
+Advance phase: next selected (05); BUILD replaced with Proposed page
+Next slice ID / draft: 06 (after 05 ships)
+Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–04.
 
 ## Status
-Shipped (implementation approved `D04-IMPL-1`; code commit `51330f48`, candidate `308f6af6…9b8c`)
+Proposed (draft `D05-DRAFT-1`; pending `D05-PLAN-1`)
 
 ## Next
-Archive written and verified. SLICES Shipped includes 04; Now is 05. Dispatch `D05-DRAFT-1` (Builder draft-proposal, no code edits). After draft: replace BUILD.md with the 05 Proposed page, zero counters, plan review `D05-PLAN-1`.
+Independent plan review `D05-PLAN-1` in isolated worktree. On APPROVE_PLAN → Not started, Builder `D05-BUILD-1`. On REJECT_PLAN → Proposed, Builder revises.
 
-**Resume action:** consume or launch `D05-DRAFT-1` (Builder draft-proposal for slice 05 Honest CLI installer). Do not re-ship 01–04. Do not implement Later-outside work. Do not publish.
+**Resume action:** consume or launch `D05-PLAN-1` (Reviewer plan review for slice 05). Do not re-ship 01–04. Do not implement Later-outside work. Do not publish.
