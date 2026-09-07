@@ -102,9 +102,13 @@ No file outside the Files constraint changes.
 none (Proposed; draft `D03-DRAFT-1` produced this page, no code)
 
 ## Review
-Plan approval: none (`D03-PLAN-1` REJECT_PLAN; see below)
+Plan approval: `D03-PLAN-2` APPROVE_PLAN — reviewer `bc-e6cec76a-5302-5f28-832a-ccc068ec7886`, contract `a2d8e0fb…820b` (revised), candidate `2a3620d1…390b`. (`D03-PLAN-1` REJECT_PLAN on `116fc217…070e`; superseded, record retained below.)
 Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
+
+### D03-PLAN-2 — APPROVE_PLAN (revised contract; recorded verbatim summary)
+Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-e6cec76a-5302-5f28-832a-ccc068ec7886`, worktree `/tmp/loop-review/D03-PLAN-2` @ `fbf30a8d`.
+Contract `a2d8e0fb…820b` (match). Candidate before/after `2a3620d1…390b` (unchanged, clean-tree). Porcelain empty. Goal-through-Tests vs rejected `d98db113` is one hunk: the N1 `validate_label(` grep. New criterion: four named hits (def `:103`, production call in `validate_side_label` `:118`, `label_rules` `:727`/`:728`). Today the pattern is 6 (`get_side_webview` `:146`, `eval` `:686`); leftover of either fails the list. Prior D03-PLAN-1 judgments hold. File:line spot-check passed. No new blockers.
 
 ### D03-PLAN-1 — REJECT_PLAN (recorded verbatim summary)
 Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-f13a47d0-9c79-51eb-abd4-a397a8f66912`, worktree `/tmp/loop-review/D03-PLAN-1` @ `d98db113`.
@@ -115,9 +119,9 @@ Blocker 1: Done when / N1 grep ``rg -n 'validate_label\(' src-tauri/src/side_bro
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Reviewer / plan review (revised contract) / slice 03
-Dispatch ID / launch state / input identity: `D03-PLAN-2` / launching / candidate `2a3620d1…390b` (code HEAD `fd142233`), contract `a2d8e0fb…820b`, draft `D03-DRAFT-2` (blocker 1 grep rewrite only)
-Pending result / last consumed dispatch: none / `D03-DRAFT-2`
+Worker / role / phase: Builder / implementation / slice 03
+Dispatch ID / launch state / input identity: `D03-BUILD-1` / launching / candidate `2a3620d1…390b` (code HEAD `fd142233`), contract `a2d8e0fb…820b`, plan approval `D03-PLAN-2`
+Pending result / last consumed dispatch: none / `D03-PLAN-2`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -128,10 +132,11 @@ Contract identity: `a2d8e0fb6f3c40d06b74f665164fffc40e2b6dd2926798446a0e57f51caf
 Candidate snapshot: HEAD `fd142233dd2235cb3832a87b00bdb95d83cb74f2` (code commit), clean-tree, CANDIDATE `2a3620d159da5a3960a7b59e66e8908de27727a3c265ad0a0760235a5bb7390b`
 Rejection count: 1
 Consecutive no-progress repairs: 0
-Open acceptance gaps / prior failing evidence: D03-PLAN-1 blocker 1 addressed in contract by `D03-DRAFT-2` (named four-line `validate_label(` list); pending `D03-PLAN-2`
+Open acceptance gaps / prior failing evidence: none (plan approved D03-PLAN-2; prior grep gap resolved)
 Repair awaiting review: false
 Review events:
 - E1 / `D03-PLAN-1` / plan / REJECT_PLAN / contract `116fc217…070e`, candidate `2a3620d1…390b` / gap: blocker 1 / rejection count 0→1
+- E2 / `D03-PLAN-2` / plan / APPROVE_PLAN / contract `a2d8e0fb…820b`, candidate `2a3620d1…390b` / blocker 1 resolved / rejection count 1 (unchanged; plan approval does not reset)
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
 Advance phase: next selected (03); BUILD replaced with Proposed page
@@ -139,7 +144,7 @@ Next slice ID / draft: 04 (after 03 ships)
 Environment note: `cargo test` is linkable here — webkit2gtk-4.1 2.52.6, gtk+-3.0 3.24.41, libsoup-3.0, javascriptcoregtk-4.1, ayatana-appindicator3, librsvg installed via apt on 2026-09-06; rustc 1.98.1 stable default.
 
 ## Status
-Proposed (revised after `D03-PLAN-1`; pending `D03-PLAN-2`)
+Building (plan approved `D03-PLAN-2`; pending `D03-BUILD-1`)
 
 ## Next
-Independent plan review `D03-PLAN-2`. On APPROVE_PLAN → Not started, Builder `D03-BUILD-1`. On REJECT_PLAN → Proposed, Builder revises.
+Builder implements the approved contract in `/workspace`. On proof → Ready for review `D03-IMPL-1`. Do not rustfmt-rewrite dirty `mirror/mod.rs` / `serve.rs`.
