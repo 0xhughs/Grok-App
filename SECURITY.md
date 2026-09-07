@@ -34,3 +34,15 @@ Do **not** open a public issue for sensitive vulnerabilities until a fix is avai
 - Prefer official Grok login / local CLI auth over pasting long-lived keys into chats.
 - Automations and YOLO permission mode can run agent actions without per-step prompts — enable only if you trust the session.
 - Support zip / Doctor export / **session diagnostic package** never include `secrets.json`, OS keychain material, or raw API keys (redacted logs and chat only).
+
+## React-vs-host confirms
+
+In-app GlassModal / `setAppDialog` confirms are **renderer UI only**. They are **not** a host IPC confirm and **not** a Tauri command ACL. Dangerous IPC is gated by window label `main` on the host. A compromised `session-*` / `pet` / `theme-editor` renderer does not get a host dialog; it gets a label reject.
+
+## CLI-install verification
+
+The setup wizard can download the Grok Build CLI. There is **no** known-good CLI hash table and **no** published sidecar default. Official mirrors often omit SHA-256 sidecars; a missing sidecar is not cryptographic verification. A first-seen digest **change** is a **hard error**, with the existing allow-unverified UI/env override. The first-seen store is mode `0600`. Setup still classifies that first-seen change as `checksum_missing` (kind collapse) — it does not invent a distinct Setup error kind.
+
+## CI pin-check
+
+Workflow `uses:` pins are 40-hex peeled commit ids from `git ls-remote --tags --heads`, with a `# <ref>` comment. `scripts/check_workflow_pins.py` fails closed on fabricated / malformed / tag-object / mismatched / stale pins (`UNKNOWN_SHA`, `TAG_OBJECT`, `REF_MISMATCH`; listing failure is `NETWORK`). `dtolnay/rust-toolchain` is pinned to the **`refs/heads/stable` tip** (no `refs/tags/stable`). If that branch moves, the checker reports `UNKNOWN_SHA` (fail-closed). This is the sanctioned exception, not a claim that CI is always green.

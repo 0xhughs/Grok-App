@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { LOCALES, loadAllLocaleCatalogs, messages } from "@/i18n/messages";
 import {
   aggregateAllowFromSummary,
+  allowFromBlocksSave,
   allowFromSummaryKey,
   buildRemoteSecurityChecklist,
   checklistStatusTone,
@@ -15,6 +17,86 @@ import {
   summarizeAllowFrom,
   summarizeAllowFromRaw,
 } from "./remoteSecurityOps";
+
+const FAMILY_AB_KEYS = [
+  "settings.remoteIm.err.allowFromRequired",
+  "settings.remoteIm.field.allowFromHelp",
+  "settings.remoteIm.discord.allowFromHelp",
+  "settings.remoteIm.qq.allowFromHelp",
+  "settings.remoteIm.qqbot.allowFromHelp",
+  "settings.remoteIm.weixin.allowFromHelp",
+  "settings.remoteIm.dingtalk.allowFromHelp",
+  "settings.remoteIm.slack.allowFromHelp",
+  "settings.remoteIm.matrix.allowFromHelp",
+  "settings.remoteIm.weibo.allowFromHelp",
+  "settings.remoteIm.discord.guide.step4",
+  "settings.remoteIm.qq.guide.step4",
+  "settings.remoteIm.qqbot.guide.step4",
+  "settings.remoteIm.weixin.guide.step3",
+  "settings.remoteIm.wecom.guide.step3",
+  "settings.remoteIm.telegram.guide.step3",
+  "settings.remoteIm.slack.guide.step5",
+  "settings.remoteIm.feishu.guide.step4",
+  "settings.remoteIm.weibo.guide.step4",
+  "settings.remoteIm.health.aclOpen",
+  "settings.remoteIm.health.hint.openAcl",
+  "settings.remoteIm.security.openCount",
+  "settings.remoteIm.security.acl.open_acl",
+  "settings.remoteIm.security.detail.aclOpen",
+  "settings.remoteIm.security.detail.aclEmpty",
+  "settings.remoteIm.health.hint.telegramAcl",
+  "settings.remoteIm.health.hint.discordAcl",
+  "settings.remoteIm.health.hint.slackAcl",
+  "settings.remoteIm.health.hint.matrixAcl",
+  "settings.remoteIm.health.hint.qqAcl",
+  "settings.remoteIm.health.hint.qqbotAcl",
+] as const;
+
+const ALLOW_FROM_OFFER_RE =
+  /\* for any|or \*|\(or \*|\* for all|only for testing|for test only|avoid \*/i;
+
+describe("allowFromBlocksSave", () => {
+  it("allow_from_blocks_save_for_empty_and_wildcard", () => {
+    for (const raw of [
+      null,
+      undefined,
+      "",
+      "   ",
+      ",,",
+      "*",
+      " * ",
+      "alice, *",
+      "*, alice",
+    ]) {
+      expect(allowFromBlocksSave(raw), String(raw)).toBe(true);
+    }
+    for (const raw of ["alice", "alice, bob", "alice*"]) {
+      expect(allowFromBlocksSave(raw), raw).toBe(false);
+    }
+  });
+});
+
+describe("Remote IM allow-from copy lockstep", () => {
+  beforeAll(async () => {
+    await loadAllLocaleCatalogs();
+  });
+
+  it("settings_remote_im_copy_never_offers_allow_from_wildcard", () => {
+    for (const loc of LOCALES) {
+      for (const key of FAMILY_AB_KEYS) {
+        const value = messages[loc][key];
+        expect(value, `${loc}.${key}`).not.toMatch(ALLOW_FROM_OFFER_RE);
+      }
+      expect(
+        messages[loc]["settings.remoteIm.security.openCount"],
+        `${loc}.security.openCount`,
+      ).toContain("{n}");
+    }
+    expect(
+      messages.en["settings.remoteIm.err.allowFromRequired"].toLowerCase(),
+    ).toContain("explicit sender id");
+  });
+});
 
 describe("parseAllowFromList", () => {
   it("returns empty for null / blank", () => {
