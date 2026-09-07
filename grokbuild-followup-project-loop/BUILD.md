@@ -1,178 +1,146 @@
 # BUILD.md
 
-Slice: 03 Gate dangerous IPC
-Archive: slices/03-gate-dangerous-ipc.md
+Slice: 04 Serve secret names
+Archive: slices/04-serve-secret-names.md
 
 ## Goal
-`side_browser_eval` / `snapshot` / `install_download_hook` are fail-closed to side-browser webviews only: they cannot `eval()` into the first-party windows `main`, `session-*`, `pet`, or `theme-editor` (N1). The dangerous IPC that N10 names — flipping global YOLO (`settings_set.permission_policy`), pointing `manual_cli_path` at an attacker binary, starting or publishing the mirror (`mirror_start`, `mirror_set_publish_tunnel`, `mirror_set_allow_remote_yolo`), `plugin_install --trust`, and `serve_start` — is rejected unless the invoking window label is exactly `main`. The same field-level main-only gate covers `settings_set.acp_server_addr` (audit §8 close-as; same command and flip helper, not a new surface; R6 validation is untouched). This is a host-side caller-label check, not a React GlassModal and not Tauri command ACL. Ask stays the default policy. Existing YOLO installs keep their stored policy. A compromised `session-*` / `pet` / `theme-editor` renderer cannot perform those flips.
+The app-spawned `grok agent serve` child receives the same secret under **both** `GROK_AGENT_SECRET` and `GROK_SERVE_SECRET`. `--secret` and the token stay off argv (`ps` cannot read them). After the child is listening, an **unauthenticated** HTTP GET to `/health` on the bind runs; if that request returns 2xx, the start path **does not** populate `connection_url` / `connection_cli`. A non-loopback bind is kept only when that unauthenticated GET is **not** 2xx; if it is 2xx the tracked child is killed and `serve_start` returns `Err`. Missing `/health` (connect fail / non-HTTP) is **Inconclusive**, not Open — it does not kill bind (official CLI does not document `/health`; requiring `Closed` would break LAN serve). Slice 03 `serve_start` main-only gate stays. Ask stays default.
 
 ## Done when
-**Pick (only this, not a menu):** host-side **main-only window-label check** via Tauri-injected `window: tauri::Window` + `require_main_window_label(window.label())`. Rejected alternatives: one-shot confirm nonce (no existing host confirm primitive) and Tauri command permissions in `main-only.json` (would require enabling app-command ACL across 423 commands — that is Out). Capability JSON is not edited. The six plugin permissions already in `main-only.json` stay as they are (D1 Held remainder).
+**Pick (only this, not a menu):** **Unauthenticated HTTP/1.1 GET `/health`** over a direct `TcpStream` to the bind (no reqwest, no proxy, no new crate). No secret is sent. Classify the first status line; drive advertise + non-loopback keep/kill from that class. Rejected: authenticated `/health`, WebSocket `/ws` upgrade probe, `serve_tcp_probe` reuse as the auth gate.
 
-**First-party reject list** (explicit; compare the **trimmed** label after `validate_label` charset/length succeeds):
-- `main`
-- `pet`
-- `theme-editor`
-- any label whose trimmed value `starts_with("session-")`
+Official Grok Build documents `GROK_AGENT_SECRET` / `--secret` and `ws://{bind}/ws?server-key=…`. This repo and that user-guide do **not** document an HTTP `/health` on `grok agent serve`. The probe target is still `/health` so the slice is observable; live CLI without that route is Inconclusive (not 2xx). Residual recorded.
 
-**N1 — side-browser target**
+### R7 — both env names, `--secret` off argv
+- `build_serve_command` (`src-tauri/src/serve.rs:479–509` today) sets **both**:
+  - `cmd.env("GROK_SERVE_SECRET", secret);`
+  - `cmd.env("GROK_AGENT_SECRET", secret);`
+- Delete `cmd.env_remove("GROK_AGENT_SECRET");` (`:506` today). Do not replace it with another remove of that name.
+- Do not add `.arg("--secret")` or the token to argv. Existing `--bind` / optional `--remote` argv stays.
+- `build_connection_cli` / `build_connection_cli_masked` (`:189–206`) stay `GROK_SERVE_SECRET=… grok --remote ws://…` (no `--secret`). Child env is the R7 fix; the copy-paste hint is not rewritten.
+- Grep (cwd `/workspace`, Proof records `-n` listings):
+  - `rg -n 'env_remove\("GROK_AGENT_SECRET"\)' src-tauri/src/` → **0**
+  - `rg -n 'cmd\.env\("GROK_AGENT_SECRET"' src-tauri/src/serve.rs` → **exactly 1** (inside `build_serve_command`)
+  - `rg -n 'cmd\.env\("GROK_SERVE_SECRET"' src-tauri/src/serve.rs` → **exactly 1** (inside `build_serve_command`)
+  - `rg -n '\.arg\("--secret"\)' src-tauri/src/serve.rs` → **0**
+  - `rg -n 'require_main_window_label' src-tauri/src/serve.rs` → **exactly 1**, the existing call at today’s `:680`, **before** `spawn_blocking`. Do not move it inside the blocking closure; do not drop `window: tauri::Window`.
 
-- `validate_side_label` (`src-tauri/src/side_browser_host.rs:117–123` today) becomes: `validate_label` → `is_first_party_webview_label` (named `pub(crate)` helper; true for the list above) → prefix `resource-browser` (`LABEL_PREFIX` at `:40`). First-party hit returns a named `pub(crate)` constant `FIRST_PARTY_SIDE_TARGET_ERR` whose text contains `first-party` (case-insensitive) and does **not** mention `resource-browser` (so the `eval("main")` test is not satisfied by the generic prefix error alone). The first-party error fires **before** the prefix error.
-- `get_side_webview` (`:142–149`) calls `validate_side_label`, not `validate_label`. Consequence: `navigate` / `reload` / `current_url` (`:654–675`) also cannot retarget first-party windows. That is in-scope fail-closed of the same function, not a new command family.
-- `eval` (`:685–701`) calls `validate_side_label` (or a one-line `pub(crate) fn check_side_eval_target(label: &str) -> Result<(), String>` that is only `validate_side_label`) **before** script-empty/size checks and **before** `get_side_webview`. `snapshot` (`:704–718`) stays a wrapper around `eval` and inherits the gate.
-- `install_hook` (`src-tauri/src/side_browser_blob.rs:1168–1181`) calls `side_browser_host::validate_side_label` (made `pub(crate)`) before `get_webview`. Empty-label check may stay as a fast path; first-party and non-prefix labels must fail `validate_side_label`.
-- Grep (cwd `/workspace`, counts recorded in Proof):
-  - `rg -n 'validate_label\(' src-tauri/src/side_browser_host.rs` lists exactly **four** matches, and those four are only: (1) the `fn validate_label` definition, (2) the single production call `validate_label(label)?;` inside `validate_side_label`, (3) `assert!(validate_label("resource-browser-tab1").is_ok());` in `label_rules`, (4) `assert!(validate_label("../x").is_err());` in `label_rules`. Proof records the `-n` listing plus enough enclosing context to identify each hit (`fn validate_label` / `validate_side_label` / `label_rules`). `eval` and `get_side_webview` no longer call `validate_label` directly — a leftover in either is a fifth or sixth hit whose context is `eval` / `get_side_webview` and fails this list. Do not use a per-line `rg -v 'mod tests'` (or similar) as the criterion: the two `label_rules` lines sit inside `mod tests` but the lines themselves do not contain `mod tests`.
-  - `rg -n 'validate_side_label' src-tauri/src/side_browser_host.rs` matches `validate_side_label` itself plus `create` (`:288`), `close` (`:632`), `get_side_webview`, and `eval` (or `check_side_eval_target`).
-  - `rg -n 'validate_side_label' src-tauri/src/side_browser_blob.rs` ≥ 1, inside `install_hook`.
-- Named tests in `side_browser_host.rs` `mod tests` (names normative):
-  - `eval_rejects_first_party_labels` — `check_side_eval_target("main")` (or `validate_side_label("main")` if eval calls it directly) is `Err` and the message contains `first-party`; same for `"session-abc"`, `"pet"`, `"theme-editor"`; `"resource-browser-tab1"` is `Ok`. This is the audit accept-when `eval(label="main")` errors. Honest limitation: `eval` itself needs `AppHandle`; the test proves the function `eval` calls first, and the grep above proves `eval` calls it.
-  - Existing `label_rules` (`:726–730`) still passes; add `validate_side_label("main")` / `"session-x"` / `"pet"` / `"theme-editor"` → `Err`.
-- Named test in `side_browser_blob.rs` `mod tests`: `install_hook_rejects_first_party_labels` — a `pub(crate)` precheck used as the first non-empty-label statement of `install_hook` (same `validate_side_label`) rejects `"main"` / `"session-x"` / `"pet"` / `"theme-editor"` and accepts `"resource-browser-x"`.
+### N3 — post-start unauthenticated `/health` probe
+**Named types / fns** (`pub` or `pub(crate)` in `serve.rs`; tests in the same `mod tests` via `include!("serve_tests_ext.rs")`):
+- `pub const UNAUTH_HEALTH_PATH: &str = "/health";`
+- `pub const UNAUTH_HEALTH_PROBE_MS: u64 = 800;`
+- `pub enum UnauthHealthClass { Open, Closed, Inconclusive }`
+- `pub fn unauth_health_url(bind: &str) -> String` — `http://{host}/{path}` with path `UNAUTH_HEALTH_PATH`. Host rewrite: bind host `0.0.0.0` → `127.0.0.1`; `::` / `[::]` → `[::1]`; other hosts unchanged (keep IPv6 brackets). No query string.
+- `pub fn classify_unauth_health_status(status: Option<u16>) -> UnauthHealthClass` — `Some(200..=299)` → `Open`; `Some(other)` → `Closed`; `None` → `Inconclusive`.
+- `pub fn serve_auth_policy(class: UnauthHealthClass, non_loopback: bool) -> ServeAuthPolicy` where `ServeAuthPolicy { advertise: bool, keep_bind: bool }`:
+  - `advertise` is `false` iff `class == Open`
+  - `keep_bind` is `false` iff `non_loopback && class == Open`
+- `fn probe_unauth_health(bind: &str) -> UnauthHealthClass` (same module; `pub(crate)` ok):
+  1. Build URL via `unauth_health_url`.
+  2. `TcpStream::connect_timeout` to the rewritten host:port, timeout `UNAUTH_HEALTH_PROBE_MS`. Do **not** use `crate::proxy::apply_to_*`. Do **not** use reqwest.
+  3. Write only:
+     `GET /health HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n`
+     Path is exactly `/health`. No `Authorization`, `Cookie`, `server-key`, `GROK_AGENT_SECRET`, `GROK_SERVE_SECRET`, or query.
+  4. Read ≤ 8192 bytes. Parse the first line as `HTTP/1.x <code>`. Missing/unparseable/timeout/connect-fail → `classify_unauth_health_status(None)`.
+- `fn finish_serve_start_with_probe(bind: &str) -> Result<ServeStatusDto, String>`:
+  1. `class = probe_unauth_health(bind)`
+  2. `policy = serve_auth_policy(class, is_non_loopback_bind(bind))`
+  3. If `!policy.keep_bind`: take/kill `TRACKED_SERVE` (same kill path as `serve_stop`’s tracked take), return `Err` whose text contains `unauthenticated` and `non-loopback` and does **not** contain the secret or `--secret`.
+  4. `st = collect_status_sync(policy.advertise)`
+  5. If `class == Open`: force `st.connection_url = None`, `st.connection_cli = None`, set `st.message` to a host string containing `unauthenticated` (no secret).
+  6. `Ok(st)`
 
-**N10 — dangerous IPC, main-only**
+**Wire into `serve_start` only** (today `:674–786`). Replace every `collect_status_sync(true)` in that command (today `:685` already-running re-issue, `:768` port-open success, `:772` deadline still-alive) with `finish_serve_start_with_probe(&bind_norm)` — for the re-issue arm use the tracked/current bind (same string `collect_status_sync` would use; default `DEFAULT_SERVE_BIND` if somehow missing). Do **not** call `probe_unauth_health` from `serve_status` / `collect_status_sync(false)` / `serve_tcp_probe` / `serve_stop`.
 
-- `pub(crate) const MAIN_ONLY_IPC_ERR: &str` in `src-tauri/src/commands/mod.rs` (facade stays ≪ 800 lines). Text: `this command may only be invoked from the main window`. `pub(crate) fn require_main_window_label(label: &str) -> Result<(), String>` returns `Ok` iff `label.trim() == "main"`, else `Err(MAIN_ONLY_IPC_ERR.into())`.
-- Every gated command takes an injected `window: tauri::Window` (Tauri fills it; JS `invoke` args are unchanged) and calls `require_main_window_label(window.label())?` **before** any state mutation / spawn. `mirror` / `serve` call `crate::commands::require_main_window_label`.
-- Commands that are **unconditionally** main-only (whole command):
-  - `mirror_start` (`src-tauri/src/mirror/mod.rs:847–861`) — including when `publish_tunnel` / `allow_remote_yolo` are `None`. `maybe_autostart` (`:870`) keeps calling `host.start()` directly and is **not** gated (headless env path, not IPC).
-  - `mirror_set_publish_tunnel` (`:1180–1184`)
-  - `mirror_set_allow_remote_yolo` (`:1188–1193`)
-  - `plugin_install` (`src-tauri/src/commands/extensions_p2.rs:462–474`) — `--trust` argv unchanged
-  - `serve_start` (`src-tauri/src/serve.rs:674–677`) — check **before** `spawn_blocking`
-- `settings_set` (`src-tauri/src/commands/settings.rs:13–17`) is **field-gated**, not whole-command-gated (session windows already call it for `defaultOpenTarget`; `src/components/side-workbench/FilesWorkspace.tsx:140–142`; theme-editor calls it for `theme`). Before `validate_manual_cli_path` / save:
-  - `pub(crate) fn dangerous_settings_flipped(prev_policy, next_policy, prev_cli, next_cli, prev_acp, next_acp) -> bool` is true if any of: `PermissionPolicy::parse` of the two policies differ (`parse` never fails — unknown tokens become `Ask`, existing behaviour); trimmed optional `manual_cli_path` differs; trimmed optional `acp_server_addr` differs (`None` / `Some("")` / whitespace-only are the same empty).
-  - If true, `require_main_window_label(window.label())?`. If false, any first-party caller may proceed (then existing validators run).
-  - R6 `validate_acp_server_addr_setting` (`:756–778`) stays byte-identical. Non-loopback still needs `confirm_remote_acp_server` (client bool). Main-only is an additional caller check on any addr flip, including loopback.
-- Named tests (normative):
-  - `commands/mod.rs` `mod ipc_gate_tests`: `require_main_window_label_allows_only_main` — `"main"` and `"  main  "` Ok; `"session-abc"`, `"pet"`, `"theme-editor"`, `""`, `"Main"` Err; Err equals `MAIN_ONLY_IPC_ERR`.
-  - `settings_tests`: `settings_set_always_approve_from_non_main_errors` — `dangerous_settings_flipped("ask", "always_approve", None, None, None, None)` is true; composing `require_main_window_label("session-abc")` / `"pet"` / `"theme-editor"` is `Err(MAIN_ONLY_IPC_ERR)`. `"main"` Ok. This is the audit accept-when `settings_set{permission_policy:"always_approve"}` from a non-main label errors. Honest limitation: `settings_set` needs `AppHandle`/`State`; the test proves the two functions `settings_set` calls for this gate, and Proof greps that `settings_set` calls them inside the flip guard.
-  - `settings_tests`: `settings_set_unrelated_field_from_non_main_ok` — `dangerous_settings_flipped` with identical policy/cli/acp is false (covers session-window `defaultOpenTarget` and theme-editor `theme` saves).
-  - `settings_tests`: `settings_set_manual_cli_path_from_non_main_errors` — cli path flip → requires main.
-  - `settings_tests`: `settings_set_acp_server_addr_from_non_main_errors` — addr flip (e.g. `None` → `"127.0.0.1:8799"`) → requires main.
-  - Existing `validate_acp_server_addr_gate_tests` and `settings_set_validates_manual_cli_path` still pass (R6 / path validators unchanged).
-- Grep: `rg -n 'require_main_window_label' src-tauri/src/` lists exactly the helper, `settings_set` (inside the flip guard), `mirror_start`, `mirror_set_publish_tunnel`, `mirror_set_allow_remote_yolo`, `plugin_install`, `serve_start`, and tests. Zero matches on `session_set_policy` / `composer_prefs_set` / `project_set_permission_policy` / `mirror_set_allow_lan`.
-- `rg -c '#\[tauri::command\]' src-tauri/src` remains 423 (add `Window` params only; do not add/remove commands).
-- `src-tauri/capabilities/default.json` and `src-tauri/capabilities/main-only.json` are byte-identical to HEAD (6 plugin perms only on main-only).
+`serve_start` still: `window: tauri::Window` → `require_main_window_label(&caller)?` → `spawn_blocking`. Gate before any spawn/mutate. `#[tauri::command]` count across `src-tauri/src` stays **423**.
 
-No file outside the Files constraint changes.
+Grep:
+- `rg -n 'collect_status_sync\(true\)' src-tauri/src/serve.rs` → **exactly 1**, inside `finish_serve_start_with_probe` (not inlined in the three former arms).
+- `rg -n 'probe_unauth_health' src-tauri/src/serve.rs` → the `fn` plus the call inside `finish_serve_start_with_probe` (and tests may sit in `serve_tests_ext.rs`, which this pattern also matches if `rg` hits the include file — Proof lists each line’s function). Zero matches in `serve_tcp_probe` / `serve_status` / `serve_stop`.
+- `rg -n 'UNAUTH_HEALTH_PATH' src-tauri/src/serve.rs src-tauri/src/serve_tests_ext.rs` ≥ 2 (const + URL builder and/or probe write).
+
+**Named tests** in `serve_tests_ext.rs` `mod tests` (names normative):
+- `spawn_serve_process_passes_secret_via_env` (existing, `:206`) — argv still has no `--secret` and no token; `envs.get("GROK_SERVE_SECRET")` **and** `envs.get("GROK_AGENT_SECRET")` are both `Some(&Some("sekrit-token-123".to_string()))`. This is the audit accept-when “both env names present, `--secret` absent”.
+- `classify_unauth_health_status_matrix` — `Some(200)` / `Some(204)` → `Open`; `Some(401)` / `Some(403)` / `Some(404)` / `Some(500)` → `Closed`; `None` → `Inconclusive`. `serve_auth_policy(Open, false).advertise == false` and `.keep_bind == true`; `serve_auth_policy(Open, true).keep_bind == false`; `Closed`/`Inconclusive` × `{false,true}` → `advertise == true` and `keep_bind == true`.
+- `unauth_health_url_rewrites_unspecified_and_keeps_loopback` — `unauth_health_url("127.0.0.1:2419") == "http://127.0.0.1:2419/health"`; `"0.0.0.0:2419"` → `http://127.0.0.1:2419/health`; `"[::1]:2419"` contains `/health` and `[::1]`; `"0.0.0.0:2419"` / `"::"`-form has **no** query (`?` absent).
+- `unauth_health_probe_open_refuses_advertise` — `std::net::TcpListener::bind("127.0.0.1:0")` thread replies `HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n`; `probe_unauth_health` → `Open`; `serve_auth_policy(Open, false).advertise == false`.
+- `unauth_health_probe_closed_allows_advertise` — same fake server with `401 Unauthorized`; class `Closed`; `advertise == true`; `keep_bind == true` even when `non_loopback` is true.
+- `unauth_health_probe_sends_no_secret` — fake server records the first request; it contains `GET /health`; it does **not** contain `server-key`, `Authorization`, `Cookie`, `GROK_AGENT_SECRET`, `GROK_SERVE_SECRET`, or `--secret`.
+
+Existing tests still pass, including `build_connection_cli_template_and_mask` (still `GROK_SERVE_SECRET=` and no `--secret`) and `normalize_bind_detects_non_loopback`.
+
+No file outside Files changes.
 
 ## Out
-- Redesigning the 423-command surface in one slice.
-- Held IDs: P1, P3, P4, P5, R1, R2, R3, R5, R6 (do not change ACP validation / `confirm_remote_acp_server` semantics), S1, S3, C3, D2–D6; D1 remainder already accepted (the 6 plugin permissions in `main-only.json`).
-- Enabling Tauri app-command ACL; adding `allow-*` entries to capability JSON; one-shot confirm nonce; native OS dialog.
-- Main-only gating of `side_browser_create` / `close` / `list` / `navigate` / `reload` / `url` as **caller** checks (session windows host the overlay via `window_label`; N1 is the **target** label, not the caller). Target-label fail-closed via `get_side_webview` is in-scope.
-- `session_set_policy` (`settings.rs:425–443`), `composer_prefs_set` (`:355–396`), `project_set_permission_policy` (`session_p1.rs:576–593`) — per-session/project composer YOLO used from `session-*` windows. Residual: XSS in a session window can still flip **that** session’s policy. Global `settings_set.permission_policy` cannot.
-- `mirror_set_allow_lan`, `mirror_set_read_only`, `mirror_set_max_clients`, `mirror_rotate_token`, `mirror_stop`, `serve_stop`.
-- Tightening `validate_manual_cli_path` to a known install root / first-seen hash (audit N10 extra sentence). Residual for later / release review.
-- Frontend GlassModal / `setAppDialog` / i18n. Settings YOLO `<Select>` (`GeneralSection.tsx:479–481`) and `serveStart` (`LeaderServePanel.tsx:192–196`) stay React-unconfirmed even on main. Mirror publish/YOLO and plugin `--trust` keep their existing GlassModals. Slice 09 leftover: docs must state React-vs-host confirm after this lands (`docs/features/remote-security.md:23` overclaim).
-- Slices 04–09 work (serve secret names, CLI installer, headless children, 0600 writes, path_scope / replay, docs).
-- rustfmt/clippy baseline fixes (see Constraints).
-- Widening `allow_from`; disabling parent-session Grok subagents; publishing / deploying.
+- Changing official CLI source (Out of Now 04). Do not add a `/health` handler to Grok Build.
+- Held IDs. Do not reopen P1, P3, P4, P5, R1, R2, R3, R5, R6, S1, S3, C3, D1–D6.
+- Undoing slice 03: `serve_start` stays main-only via `require_main_window_label`. Do not edit capability JSON. Command count stays 423.
+- Authenticated health (secret query/header), WebSocket `/ws` upgrade probe, probing `--remote` upstream.
+- Rewriting `build_connection_cli` to advertise `GROK_AGENT_SECRET=` or both names; rewriting `src/lib/serveConnect.ts` `grokRemote` (`--secret` examples). Residual for docs / later.
+- Frontend / i18n / `LeaderServePanel` / `SdkConnectWizard`. Omitting `connectionUrl` already skips clipboard (`LeaderServePanel.tsx:198–199`).
+- Gating `serve_stop`, `serve_status`, `serve_tcp_probe`. Changing default bind. Widening `allow_from`. Disabling parent-session Grok subagents. Publishing / deploying.
+- rustfmt/clippy baseline fixes (see Constraints). Do not rustfmt-rewrite pre-existing dirt in `serve.rs` beyond required hunks. Do not rustfmt-rewrite untouched pre-existing dirt in `serve_tests_ext.rs` unless that test is edited.
+- Slices 05–09.
 
 ## Constraints
-- **Files:** `src-tauri/src/commands/mod.rs`, `src-tauri/src/commands/settings.rs`, `src-tauri/src/commands/extensions_p2.rs`, `src-tauri/src/side_browser_host.rs`, `src-tauri/src/side_browser_blob.rs`, `src-tauri/src/mirror/mod.rs`, `src-tauri/src/serve.rs`. No other file. No `Cargo.toml` / `Cargo.lock`. No `capabilities/*.json`. No `src/`, i18n, or docs.
-- Do not add a new crate module (helper lives in `commands/mod.rs`). Do not edit `lib.rs`.
-- Ask remains the default permission policy. Do not change `store.rs` defaults. Do not rewrite stored settings.
-- Held R2 plumbing (`allow_remote_yolo` default false, env `GROK_MIRROR_ALLOW_REMOTE_YOLO`) is unchanged; only the IPC setters gain a caller check.
-- `plugin_install` keeps `--trust` on argv (required for non-interactive install). The gate is who may invoke, not the flag.
-- Rust style: new/changed hunks rustfmt-clean. **Do not rustfmt-rewrite pre-existing dirt** in `mirror/mod.rs` or `serve.rs` (they are already on the slice-02 dirty list). rustfmt/clippy non-regression vs slice 02 baseline (rustc 1.98.1): `cargo fmt --all -- --check` still exits 1 with diffs **only** in the same 16 files (`agent_home_config.rs`, `batch_agents.rs`, `cli_install.rs`, `cli_update.rs`, `mirror/mod.rs`, `mirror/rpc.rs`, `models_aux.rs`, `official_aux.rs`, `path_scope.rs`, `permission.rs`, `relay_stream_proxy.rs`, `secrets.rs`, `serve.rs`, `session_manager/control.rs`, `store.rs`, `wallpaper_source.rs`); `cargo clippy --all-targets -- -D warnings` still exactly `batch_agents.rs:79` (`unnecessary_map_or`), `path_scope.rs:129` (`manual_contains`), `wecom.rs:210` (`too_many_arguments`). Do not fix those here. Slice files that are not on that dirty list (`commands/mod.rs`, `settings.rs`, `extensions_p2.rs`, `side_browser_host.rs`, `side_browser_blob.rs`) must be `rustfmt --edition 2021 --check` clean and introduce zero clippy findings.
-- Do not claim cargo passed unless this session ran it.
+- **Files:** `src-tauri/src/serve.rs`, `src-tauri/src/serve_tests_ext.rs`. No other file. No `Cargo.toml` / `Cargo.lock`. No `src/`, i18n, docs, capabilities, `lib.rs`.
+- Ask remains default. Do not change `store.rs` defaults. Do not rewrite stored settings.
+- Do not add crates. Probe is std `TcpStream` + `TcpListener` in tests. `reqwest` stays unused here.
+- Direct connect only — no `proxy::apply_to_reqwest` / `apply_to_std_command` on the probe socket (child spawn still uses existing `apply_to_std_command` for `--remote`).
+- Rust style: new/changed hunks rustfmt-clean. **Do not rustfmt-rewrite pre-existing dirt** in `serve.rs` (already on the slice 02/03 dirty list). rustfmt/clippy non-regression vs that baseline (rustc 1.98.1): `cargo fmt --all -- --check` still exits 1 with diffs **only** in the same 16 files (`agent_home_config.rs`, `batch_agents.rs`, `cli_install.rs`, `cli_update.rs`, `mirror/mod.rs`, `mirror/rpc.rs`, `models_aux.rs`, `official_aux.rs`, `path_scope.rs`, `permission.rs`, `relay_stream_proxy.rs`, `secrets.rs`, `serve.rs`, `session_manager/control.rs`, `store.rs`, `wallpaper_source.rs`). `serve_tests_ext.rs` is `include!`d; if it is already rustfmt-dirty, do not expand those hunks; new tests fmt-clean. `cargo clippy --all-targets -- -D warnings` still exactly `batch_agents.rs:79` (`unnecessary_map_or`), `path_scope.rs:129` (`manual_contains`), `wecom.rs:210` (`too_many_arguments`). Do not fix those here.
+- Do not claim cargo passed unless that session ran it.
 
 ## Data / state impact
-- Stored `permission_policy`, `manual_cli_path`, `acp_server_addr`, mirror flags, and serve state are not migrated. A user already on YOLO stays on YOLO until they change it from `main`.
-- Session-window `settings_set({ ...s, defaultOpenTarget })` and theme-editor `settings_set({ ...s, theme })` keep working when the copied `s` matches stored policy/cli/acp. A session/theme-editor window holding a **stale** full settings object whose policy/cli/acp differ from the stored prev is fail-closed (main-only error). That is intentional: the host cannot tell a stale copy from an XSS flip.
-- Setup wizard / Settings on `main` keep working (`Window` is injected; JS invoke args unchanged).
-- `GROK_MIRROR_HEADLESS=1` autostart unchanged (`maybe_autostart` → `host.start()`, no window).
-- Capability JSON unchanged; no new permission prompts; no new stored nonce.
-- Confirm UX unchanged: host does not show a dialog. GlassModal remains React-only on the surfaces that already have it. Slice 09 must not claim host confirm for these commands — it should say main-only IPC + React GlassModal where present.
+- No settings / secret-store migration. `TRACKED_SERVE` still holds the full secret in memory for mask/stop.
+- Loopback + `Open`: process stays; full connection strings omitted; UI does not auto-copy (`if (st.connectionUrl)`).
+- Non-loopback + `Open`: process killed; start errors; bind is not left up.
+- `Closed` / `Inconclusive` (typical CLI with no `/health`): advertise and keep-bind unchanged from today’s TCP-ready start, including non-loopback (still `warn!` + `exposure_warning`). Residual: secretless WebSocket on LAN is undetected if `/health` is absent.
+- `serve_status` polls still omit full `connection_url` / `connection_cli`; `connection_cli_masked` last-4 unchanged.
+- Main-window `invoke("serve_start")` args unchanged (`Window` injected).
 
 ## Tests
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib side_browser_host::tests` — existing tests plus `eval_rejects_first_party_labels`; `label_rules` still ok; `0 failed`.
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib side_browser_blob::tests` — existing plus `install_hook_rejects_first_party_labels`; `0 failed`.
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib commands::ipc_gate_tests` — `require_main_window_label_allows_only_main`; `0 failed`.
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib commands::settings_tests` — existing plus the four `settings_set_*` tests named above; `validate_acp_server_addr_gate_tests` and `settings_set_validates_manual_cli_path` still ok; `0 failed`.
-- Negative proof: Proof includes `rg` showing `eval` / `get_side_webview` no longer call `validate_label` directly, and a sentence that pre-change `eval_rejects_first_party_labels` would have no symbol / `validate_side_label("main")` is `Err` only after this change (`label_rules` today only checks `"other"`; today's `validate_side_label("main")` is already `Err` but the message is the prefix error, not `FIRST_PARTY_SIDE_TARGET_ERR`).
-- Grep criteria in Done when; each command + count in Proof.
-- Lint non-regression: `rustfmt --edition 2021 --check` on the five previously-clean Files exits 0; `cargo fmt --all -- --check` dirty set identical to the 16-file baseline (including still-dirty `mirror/mod.rs` and `serve.rs`); clippy exactly the three baseline lints, none in Files.
-- Scope: `git diff --stat` vs the 03 implementation baseline lists exactly the seven Files.
-- No `pnpm vitest` (no TS change). Implementation Proof runs the targeted libs above. Full `cd src-tauri && cargo test` is required in implementation Proof (environment links: webkit2gtk present, same as slice 02); expected `0 failed`.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib serve::tests` — existing tests plus the five new names above; `spawn_serve_process_passes_secret_via_env` asserts both env names; `0 failed`.
+- Negative proof: Proof includes today’s `rg -n 'env_remove\("GROK_AGENT_SECRET"\)' src-tauri/src/serve.rs` (line `:506`) and a sentence that pre-change `envs.get("GROK_AGENT_SECRET")` is absent/`None` (the command **removes** it). After change that pattern is 0 and both env keys are `Some(token)`.
+- Grep criteria in Done when; each listing + count in Proof.
+- Lint non-regression: dirty set identical to the 16-file baseline (including still-dirty `serve.rs`); clippy exactly the three baseline lints, none introduced in Files.
+- Scope: `git diff --stat` vs the 04 implementation baseline lists exactly the two Files.
+- No `pnpm vitest` (no TS change). Implementation Proof runs `serve::tests` above. Full `cd src-tauri && cargo test` is required in implementation Proof (webkit2gtk present); expected `0 failed`.
 
 ## Proof
-Builder `D03-BUILD-1` (agent `bc-7ec31d33-231c-5a3d-9447-900c072e1406`), implemented in `/workspace` at HEAD `41253f1f`, committed by coordinator as `0aed78ab` (code-only). Candidate identity (clean-tree) `d72f73209511cb4cae63933103c68287a8fabe2b8b64cbdc522a465f368252a6`. Changed paths: exactly the seven Files (`extensions_p2.rs` rustfmt reflow of pre-existing dirt + gate; `settings.rs` field-gate + tests + rustfmt reflow of already-unclean file; others gate/tests only). `mirror/mod.rs` and `serve.rs` not rustfmt-rewritten. Rust `rustc 1.98.1`. Logs under `/tmp/build03/`. Command count 423. Capabilities JSON untouched.
-
-Implementation: `validate_side_label` = `validate_label` → `is_first_party_webview_label` → prefix; `FIRST_PARTY_SIDE_TARGET_ERR` = `refusing to target a first-party webview`. `get_side_webview` / `eval` call `validate_side_label` only. `install_hook` calls `validate_side_label` after empty-label fast path. `MAIN_ONLY_IPC_ERR` + `require_main_window_label` on the `commands/mod.rs` facade. Injected `window: tauri::Window`; `window.label()` taken before `.await`. Gate before `mirror_start` attach/setters and before `serve_start` / `plugin_install` `spawn_blocking`. `settings_set` field-gated via `dangerous_settings_flipped` (`PermissionPolicy::parse` + trimmed cli/acp) then `require_main_window_label` before `validate_manual_cli_path`. `maybe_autostart` ungated. `--trust` argv unchanged. R6 validator byte-identical.
-
-### Done when → evidence
-- First-party list + order: `is_first_party_webview_label` trims then `main`/`pet`/`theme-editor`/`session-` prefix; first-party error fires before prefix (`validate_side_label`).
-- Grep `validate_label(`: exactly four lines — `:103` `fn validate_label`, `:125` production call inside `validate_side_label`, `:737`/`:738` `label_rules`. No `eval` / `get_side_webview`.
-- `validate_side_label` in host: def + `get_side_webview` + `create` + `close` + `eval` + tests.
-- `validate_side_label` in blob: `install_hook` `:1173` + test.
-- `require_main_window_label`: helper, `settings_set` flip guard, `mirror_start`, `mirror_set_publish_tunnel`, `mirror_set_allow_remote_yolo`, `plugin_install`, `serve_start`, tests. Zero on `session_set_policy` / `composer_prefs_set` / `project_set_permission_policy` / `mirror_set_allow_lan`.
-- Named tests present and green (below). Honest limitation: helper-level; greps prove call-before-mutate.
-- Negative proof: pre-change `eval_rejects_first_party_labels` had no symbol; pre-change `validate_side_label("main")` was prefix-`Err` (`resource-browser`), not `FIRST_PARTY_SIDE_TARGET_ERR`.
-
-### Tests → evidence
-- `side_browser_host::tests`: `ok. 7 passed; 0 failed` (includes `eval_rejects_first_party_labels`, `label_rules`).
-- `side_browser_blob::tests`: `ok. 5 passed; 0 failed` (includes `install_hook_rejects_first_party_labels`).
-- `commands::ipc_gate_tests`: `ok. 1 passed; 0 failed`.
-- `commands::settings_tests`: `ok. 9 passed; 0 failed` (four `settings_set_*` plus existing ACP/cli validators).
-- Full `cd src-tauri && cargo test`: lib `1649 passed; 0 failed; 1 ignored`; bin/doc 0/0; exit 0. (1649 = slice-02 1642 + 7 new: eval_rejects, install_hook_rejects, ipc_gate, four settings_set_*.)
-- Lint: `rustfmt --edition 2021 --check` on the five previously-listed files exit 0. `cargo fmt --all -- --check` exit 1, same 16-file dirty set. `cargo clippy --all-targets` exit 0 / 3 warnings; `-D warnings` exit 101 at `batch_agents.rs:79`, `path_scope.rs:129`, `wecom.rs:210`.
-- Scope: `git diff --stat` vs `fd142233` lists exactly the seven Files.
-
-Caveats: settings.rs / extensions_p2.rs rustfmt-reflowed pre-existing dirt so those files could satisfy `--check` (semantic no-op; validators byte-identical). No live Tauri window run. Residual session-policy XSS and React-only GlassModal unchanged (Out).
+none (Proposed; draft `D04-DRAFT-1` produced this page, no code)
 
 ## Review
-Plan approval: `D03-PLAN-2` APPROVE_PLAN — reviewer `bc-e6cec76a-5302-5f28-832a-ccc068ec7886`, contract `a2d8e0fb…820b` (revised), candidate `2a3620d1…390b`. (`D03-PLAN-1` REJECT_PLAN on `116fc217…070e`; superseded, record retained below.)
-Implementation approval: `D03-IMPL-1` APPROVE_IMPLEMENTATION — reviewer `bc-c419b502-f845-51b0-872e-61d3b9041d1c`, contract `a2d8e0fb…820b`, candidate `d72f7320…52a6` (code HEAD `0aed78ab`). Coordinator recomputed identities at consume time: `/workspace` and `/tmp/loop-review/D03-IMPL-1` both HEAD `5a88df3d`, CANDIDATE `d72f7320…52a6` / CONTRACT `a2d8e0fb…820b` / MODE=clean-tree / porcelain empty. Counters frozen at 1/0.
+Plan approval: none
+Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
-
-### D03-IMPL-1 — APPROVE_IMPLEMENTATION (recorded verbatim summary)
-Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-c419b502-f845-51b0-872e-61d3b9041d1c`, worktree `/tmp/loop-review/D03-IMPL-1` @ `5a88df3d`.
-Contract `a2d8e0fb…820b` (match). Candidate before/after `d72f7320…52a6` (unchanged, clean-tree). Porcelain empty. Scope vs `fd142233`: exactly seven Files. `0aed78ab..HEAD` empty.
-Every Done when and Tests bullet remapped: N1 order + `FIRST_PARTY_SIDE_TARGET_ERR`; `validate_label(` exactly four named lines; `install_hook` gated; N10 gates before mutate/spawn; `settings_set` field-gate; R6 validator sha-identical; command count 423; capabilities byte-identical; `maybe_autostart` ungated; `--trust` unchanged. Tests (reviewer, rustc 1.98.1, `CARGO_TARGET_DIR=/tmp/review03impl/target`): host 7/0, blob 5/0, ipc_gate 1/0, settings 9/0; full `1649 passed; 0 failed; 1 ignored`. Lint non-regression: five clean files rustfmt 0; fmt dirty set exactly 16; clippy 3 baseline lints. Held Ask/R2/R6/`allow_from`/parent-subagent intact. No blockers.
-
-### D03-PLAN-2 — APPROVE_PLAN (revised contract; recorded verbatim summary)
-Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-e6cec76a-5302-5f28-832a-ccc068ec7886`, worktree `/tmp/loop-review/D03-PLAN-2` @ `fbf30a8d`.
-Contract `a2d8e0fb…820b` (match). Candidate before/after `2a3620d1…390b` (unchanged, clean-tree). Porcelain empty. Goal-through-Tests vs rejected `d98db113` is one hunk: the N1 `validate_label(` grep. New criterion: four named hits (def `:103`, production call in `validate_side_label` `:118`, `label_rules` `:727`/`:728`). Today the pattern is 6 (`get_side_webview` `:146`, `eval` `:686`); leftover of either fails the list. Prior D03-PLAN-1 judgments hold. File:line spot-check passed. No new blockers.
-
-### D03-PLAN-1 — REJECT_PLAN (recorded verbatim summary)
-Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-f13a47d0-9c79-51eb-abd4-a397a8f66912`, worktree `/tmp/loop-review/D03-PLAN-1` @ `d98db113`.
-Contract `116fc217…070e` (match). Candidate before/after `2a3620d1…390b` (unchanged, clean-tree). Porcelain empty. Code vs `fd142233` empty.
-Judgments: (a) main-only window-label check satisfies Now 03 / locked D1; (b) `acp_server_addr` in field gate is in authority (audit §8, same command); (c) field-gate reason real (`FilesWorkspace` / theme-editor); (d) helper tests + greps honest except one unsatisfiable grep; (e) one coherent slice.
-Blocker 1: Done when / N1 grep ``rg -n 'validate_label\(' src-tauri/src/side_browser_host.rs` → exactly **one** match`` is unsatisfiable together with “`label_rules` still passes”. Today the pattern matches the definition, the `validate_side_label` call, `get_side_webview`, `eval`, and two `label_rules` lines (6). After a correct impl it is still ≥4 (def + one production call + two test asserts). Repair: count production call sites excluding `fn` / `mod tests`, or name the exact remaining lines.
 
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Builder / draft-proposal / slice 04
-Dispatch ID / launch state / input identity: `D04-DRAFT-1` / launching / candidate `d72f7320…52a6` (code HEAD `0aed78ab`), no 04 contract yet (draft)
-Pending result / last consumed dispatch: none / `D03-IMPL-1`
+Worker / role / phase: Reviewer / plan review / slice 04
+Dispatch ID / launch state / input identity: `D04-PLAN-1` / launching / candidate `d72f7320…52a6` (code HEAD `0aed78ab`), contract pending recompute, draft `D04-DRAFT-1`
+Pending result / last consumed dispatch: none / `D04-DRAFT-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
 - Coverage: entire tracked tree outside the pack dir (source, tests, `.github/workflows/`, `scripts/`, lockfiles, docs, capabilities, assets).
 - Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/` (protocol + artifacts).
-Baseline snapshot: slice 02 shipped candidate — HEAD `fd142233dd2235cb3832a87b00bdb95d83cb74f2` (code), clean-tree, CANDIDATE `2a3620d159da5a3960a7b59e66e8908de27727a3c265ad0a0760235a5bb7390b`
-Contract identity: `a2d8e0fb6f3c40d06b74f665164fffc40e2b6dd2926798446a0e57f51caf820b` (revised after D03-PLAN-1; supersedes `116fc217…070e`)
+Baseline snapshot: slice 03 shipped candidate — HEAD `0aed78abe79def986d98b7594a7625a334df8cc0` (code), clean-tree, CANDIDATE `d72f73209511cb4cae63933103c68287a8fabe2b8b64cbdc522a465f368252a6`
+Contract identity: (recompute after commit)
 Candidate snapshot: HEAD `0aed78abe79def986d98b7594a7625a334df8cc0` (code commit), clean-tree, CANDIDATE `d72f73209511cb4cae63933103c68287a8fabe2b8b64cbdc522a465f368252a6`
-Rejection count: 1 (frozen at implementation approval)
+Rejection count: 0
 Consecutive no-progress repairs: 0
-Open acceptance gaps / prior failing evidence: none (plan approved D03-PLAN-2; prior grep gap resolved)
+Open acceptance gaps / prior failing evidence: none
 Repair awaiting review: false
-Review events:
-- E1 / `D03-PLAN-1` / plan / REJECT_PLAN / contract `116fc217…070e`, candidate `2a3620d1…390b` / gap: blocker 1 / rejection count 0→1
-- E2 / `D03-PLAN-2` / plan / APPROVE_PLAN / contract `a2d8e0fb…820b`, candidate `2a3620d1…390b` / blocker 1 resolved / rejection count 1 (unchanged; plan approval does not reset)
-- E3 / `D03-IMPL-1` / implementation / APPROVE_IMPLEMENTATION / contract `a2d8e0fb…820b`, candidate `d72f7320…52a6` / no gaps / counters frozen: rejections 1, no-progress 0
+Review events: none
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
-Advance phase: archive written; next selected
-Next slice ID / draft: 04 (pending `D04-DRAFT-1`)
-Environment note: `cargo test` is linkable here — webkit2gtk-4.1 2.52.6, gtk+-3.0 3.24.41, libsoup-3.0, javascriptcoregtk-4.1, ayatana-appindicator3, librsvg installed via apt on 2026-09-06; rustc 1.98.1 stable default.
+Advance phase: next selected (04); BUILD replaced with Proposed page
+Next slice ID / draft: 05 (after 04 ships)
+Environment note: `cargo test` is linkable here — webkit2gtk-4.1 / gtk+-3.0 / rustc 1.98.1 stable, same as slices 02–03.
 
 ## Status
-Shipped (implementation approved `D03-IMPL-1`; code commit `0aed78ab`, candidate `d72f7320…52a6`)
+Proposed (draft `D04-DRAFT-1`; pending `D04-PLAN-1`)
 
 ## Next
-Archive written and verified (`cmp` equal at copy time). SLICES Shipped includes 03; Now is 04. Dispatch `D04-DRAFT-1` (Builder draft-proposal, no code edits). After draft: replace BUILD.md with the 04 Proposed page, zero counters, plan review `D04-PLAN-1`.
+Independent plan review `D04-PLAN-1` in isolated worktree. On APPROVE_PLAN → Not started, Builder `D04-BUILD-1`. On REJECT_PLAN → Proposed, Builder revises.
