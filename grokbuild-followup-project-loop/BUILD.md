@@ -1,160 +1,176 @@
 # BUILD.md
 
-Slice: 07 0600 every agent-home secret write
-Archive: slices/07-0600-every-agent-home-secret-write.md
+Slice: 08 Path scope and silent replay
+Archive: slices/08-path-scope-and-silent-replay.md
 
 ## Goal
-The seven leftover production writes of App `agent-home/config.toml` and MCP OAuth token files use `write_private_agent_home_file` so those secrets are created at Unix mode `0600` (not umask `0644`). Live leftover count in the N6/S2 audit files is **seven call sites in six files** (both `mcp_oauth` sites). Held helper (`agent_home_config.rs`) and `providers.rs` stay Held. Ask stays default.
+`path_scope` denies `agent-home/config.toml`, `~/.netrc`, `~/.kube`, `~/.docker/config.json`, and `~/.npmrc` in addition to the existing S4 set. Mirror `session.send` attachment paths pass `path_scope::is_allowed` before they can become `@path` refs. Load-replay permission auto-answer is `Cancelled` unless the tool call id already has a journaled `tool-{id}` row. Ask stays default. Host-computed scope stays Held.
 
 ## Done when
-Close **S2, N6** only. Do not reopen Held IDs. Do not implement slices 08–09. Do not rewrite the agent-home module or change helper semantics except to **call** it.
+Close **S4 leftover, N11, N9** only. Do not reopen Held IDs. Do not implement slice 09. Do not verify live Grok Build `@path` semantics (Out). Do not change `is_session_load_replay_flags` (the idle heuristic stays; only the permission *answer* changes).
 
-Locked family (copy; do not invent a new writer set). S2: all **listed** leftover agent-home secret writes go through `write_private_agent_home_file`. N6 leftover files/lines at code HEAD `0b536c3d` (verify live; do not trust stale numbers blindly):
+Locked family (copy; do not invent a new deny set or a second attachment filter). Verify live; do not trust stale numbers blindly. Code inspect HEAD `e5600725`:
 
-- `src-tauri/src/agent_config_edit.rs:604` — `save_agent_config_edit` → `agent_config_toml()`
-- `src-tauri/src/agent_privacy.rs:316` — `save_privacy_config` → `agent_config_toml()`
-- `src-tauri/src/agent_codebase_indexing.rs:299` — `save_codebase_indexing` → `agent_config_toml()`
-- `src-tauri/src/permission_rules.rs:440` — `save_permission_rules` → `permission_config_path` (independent: agent-home `config.toml`; shared: `~/.grok/config.toml`)
-- `src-tauri/src/agent_memory_embed.rs:665` — `save_memory_embed_config` → `agent_config_toml()`
-- `src-tauri/src/mcp_oauth.rs:771` — `persist_oauth_tokens` → `mcp_agent_config_path` **and** `~/.grok/config.toml` (Bearer in `config.toml`)
-- `src-tauri/src/mcp_oauth.rs:857` — `write_mcp_credentials_full` → `mcp_credentials.json` under `credential_homes()` (agent GROK_HOME **and** `~/.grok`)
+**S4 leftover — extra deny paths** (`src-tauri/src/path_scope.rs:94–135` today)
 
-Replace **each** of those seven `fs::write` / `std::fs::write` calls with `crate::agent_home_config::write_private_agent_home_file`. Keep each site’s existing `map_err` string (`"write config: {e}"` vs `e.to_string()`). Do **not** switch these sites to `update_config_toml` / `update_config_toml_if_independent` (shared-mode refuse would change `permission_rules` and `mcp_oauth` destinations). Do not change shared-vs-independent write policy.
+Extend `is_denied_target` only (same host function `is_allowed` / `require_allowed` already consult). Match existing style: path components / filename, **not** “must live under real `$HOME`”. Do **not** call `user_home()` and do **not** write the operator’s real home secret files in tests.
 
-At `mcp_oauth.rs:857`, drop the following Unix `set_permissions(0o600)` block (`:858–862`); the helper creates and chmods `0600`. The helper’s non-Unix `fs::write` fallback (`agent_home_config.rs:600`) is **not** a leftover site.
+| Target | Rule (exact) |
+|---|---|
+| `agent-home/config.toml` | filename `config.toml` **and** parent directory component is `agent-home` (last two components). Do **not** deny every `config.toml`. Do **not** deny `agent-home-official/config.toml` or `.grok/config.toml`. |
+| `~/.netrc` | filename `.netrc` (anywhere, like `secrets.json`) |
+| `~/.kube` | directory component `.kube` (anywhere, like `.ssh`) — covers `~/.kube/config` and the directory itself |
+| `~/.docker/config.json` | filename `config.json` **and** parent directory component is `.docker`. Do **not** deny all of `.docker` (e.g. `.docker/daemon.json` stays not-denied). |
+| `~/.npmrc` | filename `.npmrc` (anywhere) |
 
-Call-site replacement only. `lib.rs` unchanged. `#[tauri::command]` count stays **423**.
+Existing denies stay. `grant_path` must still fail to unlock a denied target (`is_allowed` checks deny first — do not change that order).
 
-### Named tests (names normative)
-`#[cfg(unix)]` after each leftover writer: `metadata.permissions().mode() & 0o777 == 0o600` (same assert as `write_private_agent_home_file_enforces_0600`). Isolate with `APP_HOME_ENV_LOCK` + temp `GROK_APP_HOME`. For `mcp_oauth` (and any path that also writes `user_home()/.grok`), also set `HOME` to a temp dir under that lock — **do not** write the real `~/.grok`.
+Clippy site `path_scope.rs:129` (`manual_contains` on `comps.iter().any(|c| *c == "remote-im")`): rewrite that check to `comps.contains(&"remote-im")` (or equivalent). Use `contains` for any new single-value component check so this slice does **not** add a new `manual_contains`. Post-08 `cargo clippy --all-targets -- -D warnings`: exactly `wecom.rs:210`. Drop `path_scope.rs:129` from the baseline. Do not edit `wecom.rs`.
 
-- `agent_config_edit`: extend `load_and_save_roundtrip_independent` with the Unix 0600 assert on `agent_config_toml()` after `save_agent_config_edit`.
-- `agent_privacy`: extend `load_and_save_roundtrip_independent` the same way after `save_privacy_config`.
-- `agent_memory_embed`: extend `load_and_save_roundtrip_independent` the same way after `save_memory_embed_config`.
-- `agent_codebase_indexing`: add `save_codebase_indexing_enforces_0600` — independent save that writes `agent_config_toml()`, then Unix 0600.
-- `permission_rules`: add `save_permission_rules_enforces_0600` — independent `save_permission_rules` that writes agent-home `config.toml`, then Unix 0600. Do not add a shared-mode refuse.
-- `mcp_oauth`: add `write_mcp_credentials_full_enforces_0600` — call the private `write_mcp_credentials_full` (same module) and assert 0600 on the agent-home `mcp_credentials.json` (and isolated `HOME/.grok/mcp_credentials.json` if written). Add `persist_oauth_config_toml_enforces_0600`: seed an HTTP MCP server into isolated agent-home `config.toml`, `invalidate_mcp_cache`, call `persist_oauth_tokens`, assert 0600 on that `config.toml`. If `list_mcp_server_defs` prefers a live `grok mcp list` and cannot see the seed, extract a same-module write helper that `:771` calls and assert 0600 on that helper; `persist_oauth_tokens` must use it (not `fs::write`). No network.
-- Static: `leftover_n6_writers_do_not_use_bare_fs_write` in one leftover test module (`include_str!` the six Files, strip `#[cfg(test)]` modules). Production text must contain **zero** `fs::write(` and **zero** `std::fs::write(`. Fails if a leftover production write returns.
+**N11 — mirror attachment paths** (`src-tauri/src/mirror/rpc.rs:470–516` today)
 
-Do not re-test helper internals. Do not edit `agent_home_config.rs` / `providers.rs`.
+In `param_attachments`, after a non-empty `path` is parsed and **before** `out.push`, skip the item unless `crate::path_scope::is_allowed(std::path::Path::new(path))`. Keep the stored path string as the client sent it (no canonicalize rewrite). Empty/missing path stays `continue`. If every item is skipped, return `None` (same as today). Do **not** fail the whole `session.send`. Optional `tracing::warn!` on skip is OK. Do **not** filter `append_journal_attachment_refs` / desktop `session.send`.
+
+**N9 — load-replay permission answer** (`src-tauri/src/session_manager/events.rs:322–345` today; gate `stream.rs:148–158`)
+
+Keep `is_session_load_replay` / `is_session_load_replay_flags` byte-semantics identical. In the `PermissionRequest` replay arm only:
+
+- If `tool_call_id` is empty **or** the App journal has no row with `id == "tool-{tool_call_id}"` and `role == "tool"` → `respond_permission(rpc_id, PermissionOutcome::Cancelled)`.
+- If that journal row exists → keep today’s `allow_once` coerce (`coerce_wire_option_id_for_tool("allow_once", …)` + `PermissionOutcome::Selected`). That is the SLICES “unless journaled” exception.
+- Empty `acp` still returns without surfacing UI.
+
+Extract two `pub(super)` helpers on `SessionManager` in `events.rs` (names normative):
+
+- `journal_has_tool_call_id(app_session_id: &str, tool_call_id: &str) -> bool` — false when either string is empty; otherwise `store::load_messages` has `id == format!("tool-{tool_call_id}")` and `role == "tool"`. Do **not** use `journal_terminal_tool_ids` (terminal-status only).
+- `load_replay_permission_action(journaled: bool) -> LoadReplayPermissionAction` where the enum is `Cancel` \| `AllowOnce` (`Cancel` iff `!journaled`). The replay arm must call this helper (or equivalent `if journaled` that matches it) and map `Cancel` → `PermissionOutcome::Cancelled`.
+
+Do not change `events_bg.rs`, `may_auto_allow`, or the live (non-replay) permission path.
 
 `#[tauri::command]` count stays **423**. No file outside Files changes.
 
+### Named tests (names normative)
+
+**`path_scope.rs`**
+
+- `denies_s4_leftover_targets_even_under_allowed_roots` — same `with_isolated_roots` / temp project+app pattern as `denies_sensitive_targets_even_under_allowed_roots`. Create dummy files **only** under that temp tree (never `user_home()` / real `~/.netrc` / `~/.kube` / `~/.docker` / `~/.npmrc`):
+  - `app/agent-home/config.toml`
+  - `project/.netrc`
+  - `project/.kube/config`
+  - `project/.docker/config.json`
+  - `project/.npmrc`
+  - controls: `project/config.toml` (allowed); `project/.docker/daemon.json` (not denied by the docker rule)
+  - Assert `is_denied_target` + `!is_allowed` for each of the five leftover targets (including `.kube` directory if you also create it).
+  - Assert `is_allowed(&project/config.toml)`.
+  - `grant_path` on `app/agent-home/config.toml` then still `!is_allowed`.
+- Existing `denies_sensitive_targets_even_under_allowed_roots` still passes (regression). Do not rustfmt-rewrite its dirty asserts; new asserts in the new test must be written already rustfmt-clean.
+
+**`mirror/rpc.rs`**
+
+- `param_attachments_drops_disallowed_paths` — same-module call to `param_attachments`. Hold `path_scope::TEST_LOCK` if the test grants or refreshes roots.
+  - Denied existing S4 (e.g. a `.ssh/...` path) and one new leftover (e.g. `.netrc`) are absent from the result.
+  - Out-of-roots path (e.g. `/etc/passwd`, no grant) is absent (`is_allowed`, not only `is_denied_target`).
+  - A granted temp file that is not a denied target is kept.
+  - Mixed list → only the allowed item.
+  - All-disallowed list → `None`.
+  - Do not write real home secret files.
+
+**`session_manager/events.rs`** (`#[cfg(test)] mod tests` at end of file)
+
+- `load_replay_auto_answer_is_cancelled_unless_journaled` (audit accept-when: replay test asserts `Cancelled`):
+  - `load_replay_permission_action(false) == Cancel`
+  - `load_replay_permission_action(true) == AllowOnce`
+  - `journal_has_tool_call_id("", "x")` and `journal_has_tool_call_id("sid", "")` are false
+  - Isolated `APP_HOME_ENV_LOCK` + temp `GROK_APP_HOME` + `ensure_app_dirs`: `append_message` a `role: "tool"`, `id: "tool-hist-1"` row; `journal_has_tool_call_id(sid, "hist-1")` is true; unknown id is false. Restore env; do not write real `~/.grok`.
+- Existing `session_manager::routing_tests::session_load_replay_gate_matches_prompt_in_flight` still passes (do not edit `routing_tests.rs` / `stream.rs`).
+
+Existing `path_scope` / `mirror::rpc` tests still pass.
+
 Grep (cwd `/workspace`, Proof lists `-n`):
-- `rg -n 'fs::write\(' src-tauri/src/agent_config_edit.rs src-tauri/src/agent_privacy.rs src-tauri/src/agent_codebase_indexing.rs src-tauri/src/permission_rules.rs src-tauri/src/agent_memory_embed.rs` → **0**
-- `rg -n 'std::fs::write\(' src-tauri/src/mcp_oauth.rs` → **0**
-- `rg -n 'write_private_agent_home_file' src-tauri/src/agent_config_edit.rs src-tauri/src/agent_privacy.rs src-tauri/src/agent_codebase_indexing.rs src-tauri/src/permission_rules.rs src-tauri/src/agent_memory_embed.rs src-tauri/src/mcp_oauth.rs` — each of the first five files ≥1; `mcp_oauth.rs` ≥2 (both leftover sites)
-- `rg -n 'write_private_agent_home_file' src-tauri/src/providers.rs src-tauri/src/agent_home_config.rs` — still present (Held)
-- `rg -n 'fs::write' src-tauri/src/agent_home_config.rs` — production Unix write path is still the helper; the only production `fs::write` is the non-Unix fallback at `:600`. Test fixtures at `:841` / `:849` stay.
+
+- `rg -n 'fn is_denied_target' -A 80 src-tauri/src/path_scope.rs` — production body (before `fn is_allowed`) contains `.netrc`, `.kube`, `.docker`, `.npmrc`, and `config.toml` / `agent-home`.
+- `rg -n 'path_scope::is_allowed' src-tauri/src/mirror/rpc.rs` → **≥1**, inside `param_attachments`.
+- `rg -n 'PermissionOutcome::Cancelled' src-tauri/src/session_manager/events.rs` → **≥1** in the `PermissionRequest` load-replay arm.
+- `rg -n 'load_replay_permission_action' src-tauri/src/session_manager/events.rs` → **≥2** (definition + replay arm).
+- `rg -n 'journal_has_tool_call_id' src-tauri/src/session_manager/events.rs` → **≥2** (definition + replay arm or the action helper’s caller).
+- `rg -n 'is_session_load_replay_flags' src-tauri/src/session_manager/stream.rs` — still `!prompt_in_flight && !deferred_prompt_complete`.
+- `rg -c '#\[tauri::command\]' src-tauri/src` → **423**.
 
 ## Out
-- Rewriting the whole agent-home module. Changing `write_private_agent_home_file` semantics. Touching the non-Unix fallback.
-- `update_config_toml` / shared-mode refuse on `permission_rules` or `mcp_oauth`. Changing write destinations.
-- Held IDs. Do not reopen P1, P3, P4, P5, R1–R3, R5, R6, S1, S3, C3, D1–D6.
-- Slices 08–09: `path_scope.rs` denials, load-replay, docs / i18n / `settingsCatalog` / `store.rs` defaults.
-- Additional live `config.toml` writers **not** on the N6 list (residual unless a later authorized slice expands Files): `extensions.rs:1657,1686,1721,2043,2077`; `models_aux.rs:522,553,1463,1472,1492`; `relay_stream_proxy.rs:348`. Isolated `official_aux.rs:143` `agent-home-official/config.toml`. `extensions.rs:669` `extensions.json`.
-- New Settings keys, new IPC, publishing / deploying.
-- rustfmt-rewrite of the post-06 15-file dirty set. Widening `allow_from`. Changing Ask default.
+- Verifying live Grok Build `@path` semantics.
+- Slice 09 docs / i18n / `settingsCatalog` / `settings-remoteIm.ts` / `README_EN.md` / `SECURITY.md` / `docs/features/remote-security.md`.
+- Held IDs. Do not reopen P1, P3, P4, P5, R1–R3, R5, R6, S1, S3, C3, D1–D6. Do not weaken host-computed scope (P4): deny/allow stay on host `path_scope`; no client “already allowed” flag; do not skip deny after `grant_path`.
+- Widening `allow_from`. Changing Ask default / `store.rs` `permission_policy`. New Settings keys, new IPC, publishing / deploying.
+- Filtering desktop `session.send` / `append_journal_attachment_refs` / `commands/session_p1.rs`. Residual: those paths stay unfiltered; N11 is mirror `param_attachments` only.
+- Denying `.grok/config.toml`, `agent-home-official/config.toml`, all `config.toml`, or all of `.docker`. Residual unless a later authorized slice expands Files.
+- Changing `is_session_load_replay` / `is_session_load_replay_flags` / plan / ask_user replay gates. Changing `events_bg.rs` or `may_auto_allow`.
+- Editing `stream.rs` (including the stale `:184–185` comment). Residual N12-class.
+- rustfmt-rewrite of the 15-file post-06 dirty set. Touching `wecom.rs`. Adding crates. Editing `lib.rs` / `Cargo.toml` / `Cargo.lock` / capabilities / App shell.
 
 ## Constraints
-- **Files:** `src-tauri/src/agent_config_edit.rs`, `src-tauri/src/agent_privacy.rs`, `src-tauri/src/agent_codebase_indexing.rs`, `src-tauri/src/permission_rules.rs`, `src-tauri/src/agent_memory_embed.rs`, `src-tauri/src/mcp_oauth.rs`. Tests stay in those files. A small test-only 0600 assert helper in one of those modules is OK. No `Cargo.toml` / `Cargo.lock`. No `agent_home_config.rs`, `providers.rs`, `lib.rs`, `store.rs`, `path_scope.rs`, docs, i18n, capabilities, App shell.
+- **Files:** `src-tauri/src/path_scope.rs`, `src-tauri/src/mirror/rpc.rs`, `src-tauri/src/session_manager/events.rs`. Tests stay in those files. No `Cargo.toml` / `Cargo.lock`. No `store.rs`, `lib.rs`, `stream.rs`, `types.rs`, `events_bg.rs`, `control.rs`, `routing_tests.rs`, docs, i18n, capabilities, App shell.
 - Ask remains default. Untrusted projects stay Ask.
-- Do not add crates. Disk tests use `APP_HOME_ENV_LOCK` + temp `GROK_APP_HOME` (and temp `HOME` when a writer also touches `user_home()/.grok`). No network. No live `~/.grok` writes.
+- Do not add crates. Disk/path tests use temp dirs + `path_scope::TEST_LOCK` / `APP_HOME_ENV_LOCK` + temp `GROK_APP_HOME`. No network. No live `~/.netrc` / `~/.kube` / `~/.docker/config.json` / `~/.npmrc` / real `~/.grok` writes.
 - App shell freeze: no new `useState` / feature blocks in `App.tsx` / `AppWorkbench.tsx`. Combined line count of those two files must not grow.
-- Rust style: new/changed hunks rustfmt-clean. **Do not rustfmt-rewrite pre-existing dirt.** Post-06 dirty set is **15 files**: `agent_home_config.rs`, `batch_agents.rs`, `cli_update.rs`, `mirror/mod.rs`, `mirror/rpc.rs`, `models_aux.rs`, `official_aux.rs`, `path_scope.rs`, `permission.rs`, `relay_stream_proxy.rs`, `secrets.rs`, `serve.rs`, `session_manager/control.rs`, `store.rs`, `wallpaper_source.rs`. `cli_install.rs` is clean. Leftover 06 modules stay clean. The six Files above are not on that list — they must stay fmt-clean.
-- Clippy `-D warnings` after this slice: exactly `path_scope.rs:129`, `wecom.rs:210`.
+- Rust style: new/changed hunks rustfmt-clean. **Do not rustfmt-rewrite pre-existing dirt.** Post-06 dirty set is **15 files**: `agent_home_config.rs`, `batch_agents.rs`, `cli_update.rs`, `mirror/mod.rs`, `mirror/rpc.rs`, `models_aux.rs`, `official_aux.rs`, `path_scope.rs`, `permission.rs`, `relay_stream_proxy.rs`, `secrets.rs`, `serve.rs`, `session_manager/control.rs`, `store.rs`, `wallpaper_source.rs`. `path_scope.rs` and `mirror/rpc.rs` are already dirty: new hunks clean, leftover dirt untouched. `events.rs` is **not** on that list — it must stay `rustfmt --edition 2021 --check` clean (do not add it to the dirty set).
+- Clippy `-D warnings` after this slice: exactly `wecom.rs:210` (`too_many_arguments`). `path_scope.rs:129` (`manual_contains`) is **dropped** by the required `contains` rewrite. Zero new clippy findings in Files.
 - Do not claim cargo passed unless that session ran it.
 
 ## Data / state impact
 - No settings / secret-store migration. `store.rs` `permission_policy` default stays **ask**. `session_data_mode` default unchanged (shared).
 - No new IPC. Command count **423**.
-- On the next leftover save, `config.toml` / `mcp_credentials.json` at those sites are `0600` on Unix. Existing `0644` files are not rewritten until that save.
-- Shared-vs-independent policy unchanged: edit/privacy/codebase/memory still refuse shared; `permission_rules` still writes the active GROK_HOME (including `~/.grok` when shared); `mcp_oauth` still dual-writes agent-home and `~/.grok`. Those same call sites also get `0600` when they write `~/.grok`.
-- Residual: other production writers of `agent-home/config.toml` (extensions / models_aux / relay_stream_proxy) and `agent-home-official/config.toml` still use umask `fs::write` until a later authorized slice. Coordinator accepted this residual (same class as slice 06 aux global-only YOLO) so the slice stays the N6 six-file leftover list. Locked S2 “all” is Held for the listed leftover sites; extras stay Partial.
+- Host `path_scope` denials apply to every existing `is_allowed` / `require_allowed` caller (media HTTP, `fs_read_absolute`, etc.) for the five leftover names — that is the S4 leftover closing, not a new surface.
+- Mirror `session.send` attachments that fail `is_allowed` never reach the journal `@path` dual-write. Text of the send still goes through.
+- Load-replay `request_permission` with an unknown / empty tool id is `Cancelled` (agent unblocked, not silently allowed). Journaled historical `tool-{id}` rows still get `allow_once` coerce.
+- Residual: desktop attachments; `.grok` / `agent-home-official` `config.toml`; stale `stream.rs` permission-replay comment; background `may_auto_allow` (policy, not N9).
 
 ## Tests
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib agent_config_edit::tests` — existing tests plus Unix 0600 on `load_and_save_roundtrip_independent` and `leftover_n6_writers_do_not_use_bare_fs_write` if hosted here; `0 failed`.
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib agent_privacy::tests` — existing plus Unix 0600 on the roundtrip; `0 failed`.
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib agent_codebase_indexing::tests` — existing plus `save_codebase_indexing_enforces_0600`; `0 failed`.
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib permission_rules::tests` — existing plus `save_permission_rules_enforces_0600`; `0 failed`.
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib agent_memory_embed::tests` — existing plus Unix 0600 on the roundtrip; `0 failed`.
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib mcp_oauth::tests` — existing plus `write_mcp_credentials_full_enforces_0600` and `persist_oauth_config_toml_enforces_0600` (or the extracted write-helper 0600 test); `0 failed`.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib path_scope::tests` — existing plus `denies_s4_leftover_targets_even_under_allowed_roots`; `0 failed`.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib mirror::rpc::tests` — existing plus `param_attachments_drops_disallowed_paths`; `0 failed`.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib session_manager::events::tests` — `load_replay_auto_answer_is_cancelled_unless_journaled`; `0 failed`.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib session_manager::routing_tests::session_load_replay_gate_matches_prompt_in_flight` — still passes (gate unchanged).
 - Grep criteria in Done when; each listing + count in Proof.
-- Lint non-regression: `cargo fmt --all -- --check` still exits 1 with diffs **only** in the 15-file post-06 set (no new dirty files; Files stay clean; `cli_install.rs` stays clean). `cargo clippy --all-targets -- -D warnings` exactly `path_scope.rs:129`, `wecom.rs:210`.
+- Lint non-regression: `cargo fmt --all -- --check` still exits 1 with diffs **only** in the 15-file post-06 set (no new dirty files; `events.rs` stays clean). `rustfmt --edition 2021 --check src-tauri/src/session_manager/events.rs` exit 0. `cargo clippy --all-targets -- -D warnings` exactly `wecom.rs:210`.
 - Scope: `git diff --stat` vs this slice’s implementation baseline lists only Files.
 - No `pnpm vitest` required (no i18n / settings catalog).
-- Full `cd src-tauri && cargo test` required at implementation; expected `0 failed` (or the same pre-existing parallel flake outside Files as prior slices, with serial `--test-threads=1` green). Do not claim it passed in this contract.
+- Full `cd src-tauri && cargo test` required at implementation; expected `0 failed` (or the same pre-existing parallel flake `terminal_pty_spawn_rejects_untrusted_project_path` outside Files, with serial `--test-threads=1` green). Do not claim it passed in this contract.
 
 ## Proof
-Builder `D07-BUILD-1` (agent `bc-242d40e8-f34a-59bd-8b05-5cea3a17a81b`), implemented in `/workspace` at HEAD `d56a6cbd`, committed by coordinator as `e5600725` (code-only). Candidate identity (clean-tree) `66debe655623292c3aac8fcada12de18a787b5a14a62abe80c4fa79f30024338`. Changed paths: exactly the six Files (+334/−12). Rust `rustc 1.98.1`. Command count 423.
-
-Implementation: seven leftover writes use `write_private_agent_home_file`. Persist uses extracted `write_oauth_config_toml`. Credentials site dropped post-write `set_permissions`. Shared-vs-independent policy unchanged. Extra non-N6 writers residual.
-
-### Done when → evidence
-- `rg -n 'fs::write\('` on first five Files → **0**
-- `rg -n 'std::fs::write\(' src-tauri/src/mcp_oauth.rs` → **0**
-- `write_private_agent_home_file`: first five **1** each; `mcp_oauth.rs` **2** (`:709` helper, `:866` credentials)
-- Held helper still in `providers.rs` / `agent_home_config.rs`
-- `#[tauri::command]` count **423**
-
-### Tests → evidence
-- `agent_config_edit::tests`: existing + Unix 0600 on roundtrip + `leftover_n6_writers_do_not_use_bare_fs_write`
-- `agent_privacy::tests` / `agent_memory_embed::tests`: Unix 0600 on roundtrip
-- `save_codebase_indexing_enforces_0600`, `save_permission_rules_enforces_0600`
-- `write_mcp_credentials_full_enforces_0600`, `persist_oauth_config_toml_enforces_0600` (`seed_visible=true`; persist uses extracted helper)
-- Full `cd src-tauri && cargo test`: `1667 passed; 0 failed; 1 ignored`
-- `cargo fmt --all -- --check` exit 1; dirty set is the 15-file post-06 list
-- Clippy `-D warnings` exit 101 at exactly `path_scope.rs:129`, `wecom.rs:210`
-
-Caveats: residual non-N6 `config.toml` writers unchanged. Coordinator did not re-run the full suite (Reviewer rematches).
+none
 
 ## Review
-Plan approval: `D07-PLAN-1` APPROVE_PLAN — reviewer `bc-0d024b76-6f0f-5edd-ab46-88a0b7a57f08`, contract `2dec2226…b45c`, candidate `f19f791b…f59c`.
-Implementation approval: `D07-IMPL-1` APPROVE_IMPLEMENTATION — reviewer `bc-f9e40781-bd87-527b-8fed-17894beb5281`, contract `2dec2226…b45c`, candidate `66debe65…4338` (code HEAD `e5600725`). Coordinator recomputed identities at consume time: `/workspace` and `/tmp/loop-review/D07-IMPL-1` both HEAD `e2a742f0`, CANDIDATE `66debe655623292c3aac8fcada12de18a787b5a14a62abe80c4fa79f30024338` / CONTRACT `2dec222662a394184a94b5d24fdadee5f3edc1c7462807d0aea72cf34017b45c` / MODE=clean-tree. Counters frozen at 0/0.
+Plan approval: none
+Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
-
-### D07-PLAN-1 — APPROVE_PLAN (recorded verbatim summary)
-Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-0d024b76-6f0f-5edd-ab46-88a0b7a57f08`, worktree `/tmp/loop-review/D07-PLAN-1` @ `7a77390d`.
-Contract `2dec2226…b45c` (match). Candidate before/after `f19f791b…f59c` (unchanged, clean-tree). Porcelain empty. Code vs `0b536c3d` is pack-only.
-Judgments: (a) BUILD Goal–Tests matches SLICES Now 07 (S2, N6; seven sites / six files); (b) locked constraints present and not weakened; (c) live leftover write-site “today” descriptions accurate; (d) fail-closed / Held IDs / 08–09 Out; (e) one coherent slice with observable tests/greps; (f) extra non-N6 writers residual is within authority (S2 Held = audit leftover list); (g) tests/greps satisfiable without network or live `~/.grok`. No blockers.
-Note: if Builder claims `persist_oauth_tokens` 0600 without the helper-extract fallback, require evidence the seed was visible or that `:771` calls the extracted helper.
-
-### D07-IMPL-1 — APPROVE_IMPLEMENTATION (recorded verbatim summary)
-Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-f9e40781-bd87-527b-8fed-17894beb5281`, worktree `/tmp/loop-review/D07-IMPL-1` @ `e2a742f0`.
-Contract `2dec2226…b45c` (match, before/after). Candidate before/after `66debe65…4338` (unchanged, clean-tree). Porcelain empty. Scope vs `0b536c3d...e5600725`: exactly the six Files.
-Every Done when and Tests bullet remapped this session: seven helper writes; persist uses `write_oauth_config_toml` at live `:780`; credentials chmod drop; greps 0/0/1×5+2; named 0600 + static leftover test; extras residual; command count 423; fmt 15-file set; clippy two-site baseline; parallel `1666/1/1` known `terminal_pty` flake outside Files; serial `--test-threads=1` `1667 passed; 0 failed; 1 ignored`. No blockers.
 
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/slice-06-restrict-headless-9f74` off `origin/main` `fbb03fc8`.
-Worker / role / phase: Builder / draft-proposal / slice 08
-Dispatch ID / launch state / input identity: `D08-DRAFT-1` / launching / candidate `66debe655623292c3aac8fcada12de18a787b5a14a62abe80c4fa79f30024338` (code HEAD `e5600725`), no 08 contract yet (draft)
-Pending result / last consumed dispatch: none / `D07-IMPL-1`
+Worker / role / phase: Reviewer / plan / slice 08
+Dispatch ID / launch state / input identity: `D08-PLAN-1` / launching / candidate `66debe655623292c3aac8fcada12de18a787b5a14a62abe80c4fa79f30024338` (code HEAD `e5600725`), contract `9083988b9b74d5d955ac1db775093d01ca8968afd1b917b4ac6f7e21805e0dfe`
+Pending result / last consumed dispatch: none / `D08-DRAFT-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
 - Coverage: entire tracked tree outside the pack dir.
 - Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/`.
-Baseline snapshot: slice 06 shipped candidate — HEAD `0b536c3d` (code), clean-tree, CANDIDATE `f19f791bfe2e9f89e1de0415c7b89cf9ed3eec9f0c4cbcdae403748c1595f59c`
-Contract identity: `2dec222662a394184a94b5d24fdadee5f3edc1c7462807d0aea72cf34017b45c`
+Baseline snapshot: slice 07 shipped candidate — HEAD `e5600725` (code), clean-tree, CANDIDATE `66debe655623292c3aac8fcada12de18a787b5a14a62abe80c4fa79f30024338`
+Contract identity: `9083988b9b74d5d955ac1db775093d01ca8968afd1b917b4ac6f7e21805e0dfe`
 Candidate snapshot: HEAD `e5600725` (code commit), clean-tree, CANDIDATE `66debe655623292c3aac8fcada12de18a787b5a14a62abe80c4fa79f30024338`
 Rejection count: 0
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none
 Repair awaiting review: false
-Review events:
-- E1 / `D07-PLAN-1` / plan / APPROVE_PLAN / contract `2dec2226…b45c`, candidate `f19f791b…f59c` / no gaps / rejection count 0
-- E2 / `D07-IMPL-1` / implementation / APPROVE_IMPLEMENTATION / contract `2dec2226…b45c`, candidate `66debe65…4338` / no gaps / counters frozen: rejections 0, no-progress 0
+Review events: none
 Budget limit / consumed / measurement: Not configured; do not invent a budget
-Blocker / resume status / resume action / recheck condition / deadline: if interrupted before `D08-DRAFT-1` returns, re-dispatch `D08-DRAFT-1` (proposal only, no code). Do not publish.
-Advance phase: archive written; next selected
-Next slice ID / draft: 08 (`D08-DRAFT-1` launching)
-Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–06.
+Blocker / resume status / resume action / recheck condition / deadline: if interrupted before `D08-PLAN-1` returns, re-dispatch `D08-PLAN-1`. Do not publish.
+Advance phase: 08 Proposed page persisted; plan review launching
+Next slice ID / draft: 08 (`D08-PLAN-1` launching)
+Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–07.
 
 ## Status
-Shipped (implementation approved `D07-IMPL-1`; code commit `e5600725`, candidate `66debe65…4338`)
+Proposed
 
 ## Next
-Coordinator: archive this page to `slices/07-0600-every-agent-home-secret-write.md`, add 07 to SLICES Shipped, select 08 as Now, dispatch Builder draft-proposal for 08 (no code edits), then replace BUILD.md with the 08 Proposed page.
+Independent Reviewer `D08-PLAN-1`. After APPROVE_PLAN: Builder implements. After REJECT: Builder revises proposal.
 
-**Resume action:** dispatch `D08-DRAFT-1` (Builder draft-proposal for slice 08 Path scope and silent replay). Do not re-ship 01–07. Do not implement Later-outside work. Do not publish.
+**Resume action:** launch `D08-PLAN-1` (isolated worktree, no write). Do not re-ship 01–07. Do not implement Later-outside work. Do not publish.
