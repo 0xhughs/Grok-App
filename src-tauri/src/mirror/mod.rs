@@ -845,12 +845,15 @@ pub async fn mirror_status(host: State<'_, Arc<MirrorHost>>) -> Result<MirrorSta
 
 #[tauri::command]
 pub async fn mirror_start(
+    window: tauri::Window,
     app: AppHandle,
     host: State<'_, Arc<MirrorHost>>,
     mgr: State<'_, Arc<SessionManager>>,
     publish_tunnel: Option<bool>,
     allow_remote_yolo: Option<bool>,
 ) -> Result<MirrorStatus, String> {
+    let caller = window.label().to_string();
+    crate::commands::require_main_window_label(&caller)?;
     host.attach(app, mgr.inner().clone());
     if let Some(p) = publish_tunnel {
         let _ = host.set_publish_tunnel(p).await;
@@ -1178,17 +1181,23 @@ pub async fn mirror_set_allow_lan(
 
 #[tauri::command]
 pub async fn mirror_set_publish_tunnel(
+    window: tauri::Window,
     host: State<'_, Arc<MirrorHost>>,
     publish_tunnel: bool,
 ) -> Result<MirrorStatus, String> {
+    let caller = window.label().to_string();
+    crate::commands::require_main_window_label(&caller)?;
     host.set_publish_tunnel(publish_tunnel).await
 }
 
 #[tauri::command]
 pub async fn mirror_set_allow_remote_yolo(
+    window: tauri::Window,
     host: State<'_, Arc<MirrorHost>>,
     allow_remote_yolo: bool,
 ) -> Result<MirrorStatus, String> {
+    let caller = window.label().to_string();
+    crate::commands::require_main_window_label(&caller)?;
     host.set_allow_remote_yolo(allow_remote_yolo);
     Ok(host.status())
 }

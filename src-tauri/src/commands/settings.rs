@@ -12,11 +12,23 @@ pub fn store_take_quarantine() -> Option<String> {
 #[tauri::command]
 pub async fn settings_set(
     app: tauri::AppHandle,
+    window: tauri::Window,
     mgr: State<'_, Arc<SessionManager>>,
     settings: AppSettings,
 ) -> Result<AppSettings, String> {
+    let caller = window.label().to_string();
     let prev = store::load_settings();
     let mut settings = settings;
+    if dangerous_settings_flipped(
+        &prev.permission_policy,
+        &settings.permission_policy,
+        prev.manual_cli_path.as_deref(),
+        settings.manual_cli_path.as_deref(),
+        prev.acp_server_addr.as_deref(),
+        settings.acp_server_addr.as_deref(),
+    ) {
+        require_main_window_label(&caller)?;
+    }
     // Validate manual_cli_path (D1): reject non-existent, non-file, or non-executable paths.
     validate_manual_cli_path(settings.manual_cli_path.as_deref())?;
     if let Some(ref path) = settings.manual_cli_path {
@@ -38,24 +50,21 @@ pub async fn settings_set(
     // Normalize denylist / allowlist so spawn / equality see stable lists.
     settings.disallowed_tools =
         crate::acp_client::normalize_disallowed_tools(&settings.disallowed_tools);
-    settings.allowed_tools =
-        crate::acp_client::normalize_allowed_tools(&settings.allowed_tools);
+    settings.allowed_tools = crate::acp_client::normalize_allowed_tools(&settings.allowed_tools);
     // Normalize optional agent profile path (trim / drop control chars).
     settings.agent_profile_path =
         crate::agents_catalog::normalize_agent_profile_path(&settings.agent_profile_path)
             .unwrap_or_default();
     // Normalize / validate optional agents JSON (reject invalid non-empty).
-    settings.agents_json =
-        crate::agents_catalog::normalize_agents_json(&settings.agents_json)?;
+    settings.agents_json = crate::agents_catalog::normalize_agents_json(&settings.agents_json)?;
     // Headless background-wait policy (CLI 0.2.117+); clamp timeout 1–3600.
     settings.background_wait_policy =
         crate::acp_client::normalize_background_wait_policy(&settings.background_wait_policy)
             .as_str()
             .to_string();
-    settings.background_wait_timeout_sec =
-        crate::acp_client::normalize_background_wait_timeout_sec(
-            settings.background_wait_timeout_sec,
-        );
+    settings.background_wait_timeout_sec = crate::acp_client::normalize_background_wait_timeout_sec(
+        settings.background_wait_timeout_sec,
+    );
     // Normalize compaction mode/detail enums (CLI 0.2.117+).
     settings.compaction_mode =
         crate::acp_client::normalize_compaction_mode(&settings.compaction_mode).to_string();
@@ -64,18 +73,15 @@ pub async fn settings_set(
     // Audit ledger retention presets: 7 / 30 / 90 / 0 (unlimited).
     settings.audit_ledger_retention_days =
         crate::audit_ledger::normalize_retention_days(settings.audit_ledger_retention_days);
-    let audit_retention_flip = crate::audit_ledger::normalize_retention_days(
-        prev.audit_ledger_retention_days,
-    ) != settings.audit_ledger_retention_days;
-    let keychain_flip =
-        prev.store_api_keys_in_keychain != settings.store_api_keys_in_keychain;
-    let session_data_mode_changed =
-        prev.session_data_mode != settings.session_data_mode;
+    let audit_retention_flip =
+        crate::audit_ledger::normalize_retention_days(prev.audit_ledger_retention_days)
+            != settings.audit_ledger_retention_days;
+    let keychain_flip = prev.store_api_keys_in_keychain != settings.store_api_keys_in_keychain;
+    let session_data_mode_changed = prev.session_data_mode != settings.session_data_mode;
     let memory_flip = prev.experimental_memory != settings.experimental_memory;
     let web_search_flip = prev.disable_web_search != settings.disable_web_search;
-    let official_aux_inject_flip =
-        prev.official_aux_inject != settings.official_aux_inject
-            || prev.official_aux_with_user_mcp != settings.official_aux_with_user_mcp;
+    let official_aux_inject_flip = prev.official_aux_inject != settings.official_aux_inject
+        || prev.official_aux_with_user_mcp != settings.official_aux_with_user_mcp;
     // Keep native-Imagine PreToolUse hook in sync with inject / route (independent home only).
     if official_aux_inject_flip || session_data_mode_changed {
         let mode = settings.session_data_mode.clone();
@@ -87,15 +93,12 @@ pub async fn settings_set(
         &prev.disallowed_tools,
         &settings.disallowed_tools,
     );
-    let allowed_tools_flip = !crate::acp_client::allowed_tools_equal(
-        &prev.allowed_tools,
-        &settings.allowed_tools,
-    );
+    let allowed_tools_flip =
+        !crate::acp_client::allowed_tools_equal(&prev.allowed_tools, &settings.allowed_tools);
     // Normalize TodoGate max fires (1–20; 0 → default 3).
-    settings.todo_gate_max_fires_per_prompt =
-        crate::agent_todo_gate::normalize_todo_gate_max_fires(Some(
-            settings.todo_gate_max_fires_per_prompt,
-        ));
+    settings.todo_gate_max_fires_per_prompt = crate::agent_todo_gate::normalize_todo_gate_max_fires(
+        Some(settings.todo_gate_max_fires_per_prompt),
+    );
     let todo_gate_flip = prev.todo_gate_enabled != settings.todo_gate_enabled
         || crate::agent_todo_gate::normalize_todo_gate_max_fires(Some(
             prev.todo_gate_max_fires_per_prompt,
@@ -103,14 +106,13 @@ pub async fn settings_set(
     let plan_enabled_flip = prev.plan_enabled != settings.plan_enabled;
     let use_leader_changed = prev.use_leader != settings.use_leader;
     let subagents_flip = prev.subagents_enabled != settings.subagents_enabled;
-    let subagent_wt_snap_flip = prev.subagent_worktree_snapshot_enabled
-        != settings.subagent_worktree_snapshot_enabled;
+    let subagent_wt_snap_flip =
+        prev.subagent_worktree_snapshot_enabled != settings.subagent_worktree_snapshot_enabled;
     let auto_wake_flip = prev.auto_wake_enabled != settings.auto_wake_enabled;
     let workflows_flip = prev.workflows_enabled != settings.workflows_enabled;
     let two_pass_compaction_flip =
         prev.two_pass_compaction_enabled != settings.two_pass_compaction_enabled;
-    let preferred_agent_flip =
-        prev.preferred_agent.trim() != settings.preferred_agent.trim();
+    let preferred_agent_flip = prev.preferred_agent.trim() != settings.preferred_agent.trim();
     let agent_profile_flip = prev.agent_profile_path.trim() != settings.agent_profile_path.trim();
     let agents_json_flip = prev.agents_json.trim() != settings.agents_json.trim();
     let max_turns_flip = prev.max_agent_turns != settings.max_agent_turns;
@@ -336,7 +338,8 @@ pub async fn settings_set(
 }
 
 #[tauri::command]
-pub async fn models_list_available() -> Result<crate::models_catalog::AvailableModelsResult, String> {
+pub async fn models_list_available() -> Result<crate::models_catalog::AvailableModelsResult, String>
+{
     Ok(crate::models_catalog::list_available_models())
 }
 
@@ -402,12 +405,7 @@ pub async fn composer_prefs_set(
     if let Some(eff) = effort {
         let effort_changed = previous_effort.as_deref() != Some(eff.trim());
         if let Err(e) = mgr
-            .set_effort_and_respawn_needed(
-                &app,
-                eff,
-                session_id.as_deref(),
-                effort_changed,
-            )
+            .set_effort_and_respawn_needed(&app, eff, session_id.as_deref(), effort_changed)
             .await
         {
             tracing::warn!("composer_prefs_set set_effort soft-fail: {e}");
@@ -515,12 +513,7 @@ pub async fn fs_write_file(
     content: String,
     expected_mtime_ms: Option<u64>,
 ) -> Result<crate::fs_browser::FsWriteResult, String> {
-    crate::fs_browser::write_text_file(
-        &project_path,
-        &relative,
-        &content,
-        expected_mtime_ms,
-    )
+    crate::fs_browser::write_text_file(&project_path, &relative, &content, expected_mtime_ms)
 }
 
 /// Write UTF-8 text to an absolute path already open in the resource pane.
@@ -535,9 +528,7 @@ pub async fn fs_write_absolute(
 
 /// Read an absolute path for resource-pane preview (chat file cards, agent outputs).
 #[tauri::command]
-pub async fn fs_read_absolute(
-    path: String,
-) -> Result<crate::fs_browser::FsReadResult, String> {
+pub async fn fs_read_absolute(path: String) -> Result<crate::fs_browser::FsReadResult, String> {
     crate::fs_browser::read_absolute_file(&path)
 }
 
@@ -634,21 +625,13 @@ pub async fn secrets_set(
     let mut s = store::load_secrets();
     // Empty string clears the secret (needed when revoking speech/API credentials).
     if let Some(k) = official_api_key {
-        s.official_api_key = if k.trim().is_empty() {
-            None
-        } else {
-            Some(k)
-        };
+        s.official_api_key = if k.trim().is_empty() { None } else { Some(k) };
     }
     if let Some(u) = relay_base_url {
         s.relay_base_url = if u.is_empty() { None } else { Some(u) };
     }
     if let Some(k) = relay_api_key {
-        s.relay_api_key = if k.trim().is_empty() {
-            None
-        } else {
-            Some(k)
-        };
+        s.relay_api_key = if k.trim().is_empty() { None } else { Some(k) };
     }
     if let Some(m) = default_model {
         s.default_model = if m.is_empty() { None } else { Some(m) };
@@ -731,14 +714,21 @@ pub async fn provider_ping() -> Result<serde_json::Value, String> {
     }
 
     // CLI auth present?
-    let auth = crate::process_util::user_home().join(".grok").join("auth.json");
+    let auth = crate::process_util::user_home()
+        .join(".grok")
+        .join("auth.json");
     if auth.is_file() {
         Ok(serde_json::json!({
             "ok": true,
             "class": "OK",
             "message": "CLI auth.json present (cached_token). Use Doctor + real chat to verify."
         }))
-    } else if secrets.official_api_key.as_ref().map(|k| !k.is_empty()).unwrap_or(false) {
+    } else if secrets
+        .official_api_key
+        .as_ref()
+        .map(|k| !k.is_empty())
+        .unwrap_or(false)
+    {
         Ok(serde_json::json!({
             "ok": true,
             "class": "OK",
@@ -751,6 +741,24 @@ pub async fn provider_ping() -> Result<serde_json::Value, String> {
             "message": "No provider configured. Use Onboarding: official key, relay, or import."
         }))
     }
+}
+
+fn trim_optional_setting(v: Option<&str>) -> Option<&str> {
+    v.map(str::trim).filter(|s| !s.is_empty())
+}
+
+pub(crate) fn dangerous_settings_flipped(
+    prev_policy: &str,
+    next_policy: &str,
+    prev_cli: Option<&str>,
+    next_cli: Option<&str>,
+    prev_acp: Option<&str>,
+    next_acp: Option<&str>,
+) -> bool {
+    crate::permission::PermissionPolicy::parse(prev_policy)
+        != crate::permission::PermissionPolicy::parse(next_policy)
+        || trim_optional_setting(prev_cli) != trim_optional_setting(next_cli)
+        || trim_optional_setting(prev_acp) != trim_optional_setting(next_acp)
 }
 
 pub fn validate_acp_server_addr_setting(
@@ -820,18 +828,86 @@ mod settings_tests {
         assert!(err_no_conf.is_err());
         assert!(err_no_conf.unwrap_err().contains("explicit confirmation"));
 
-        let err_false_conf = validate_acp_server_addr_setting(Some("192.168.1.100:8799"), None, Some(false));
+        let err_false_conf =
+            validate_acp_server_addr_setting(Some("192.168.1.100:8799"), None, Some(false));
         assert!(err_false_conf.is_err());
 
         // Non-loopback with explicit confirmation passes
-        assert!(validate_acp_server_addr_setting(Some("192.168.1.100:8799"), None, Some(true)).is_ok());
+        assert!(
+            validate_acp_server_addr_setting(Some("192.168.1.100:8799"), None, Some(true)).is_ok()
+        );
 
         // Already configured address in prev does not re-require confirmation
         assert!(validate_acp_server_addr_setting(
             Some("192.168.1.100:8799"),
             Some("192.168.1.100:8799"),
             None,
-        ).is_ok());
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn settings_set_always_approve_from_non_main_errors() {
+        assert!(dangerous_settings_flipped(
+            "ask",
+            "always_approve",
+            None,
+            None,
+            None,
+            None
+        ));
+        assert_eq!(
+            require_main_window_label("session-abc").unwrap_err(),
+            MAIN_ONLY_IPC_ERR
+        );
+        assert_eq!(
+            require_main_window_label("pet").unwrap_err(),
+            MAIN_ONLY_IPC_ERR
+        );
+        assert_eq!(
+            require_main_window_label("theme-editor").unwrap_err(),
+            MAIN_ONLY_IPC_ERR
+        );
+        assert!(require_main_window_label("main").is_ok());
+    }
+
+    #[test]
+    fn settings_set_unrelated_field_from_non_main_ok() {
+        assert!(!dangerous_settings_flipped(
+            "ask", "ask", None, None, None, None
+        ));
+    }
+
+    #[test]
+    fn settings_set_manual_cli_path_from_non_main_errors() {
+        assert!(dangerous_settings_flipped(
+            "ask",
+            "ask",
+            None,
+            Some("/tmp/evil-cli"),
+            None,
+            None
+        ));
+        assert_eq!(
+            require_main_window_label("session-abc").unwrap_err(),
+            MAIN_ONLY_IPC_ERR
+        );
+    }
+
+    #[test]
+    fn settings_set_acp_server_addr_from_non_main_errors() {
+        assert!(dangerous_settings_flipped(
+            "ask",
+            "ask",
+            None,
+            None,
+            None,
+            Some("127.0.0.1:8799")
+        ));
+        assert_eq!(
+            require_main_window_label("session-abc").unwrap_err(),
+            MAIN_ONLY_IPC_ERR
+        );
     }
 
     #[test]
@@ -857,8 +933,10 @@ mod settings_tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&non_exec_file, std::fs::Permissions::from_mode(0o644));
-            let err_non_exec = validate_manual_cli_path(Some(non_exec_file.to_str().unwrap())).unwrap_err();
+            let _ =
+                std::fs::set_permissions(&non_exec_file, std::fs::Permissions::from_mode(0o644));
+            let err_non_exec =
+                validate_manual_cli_path(Some(non_exec_file.to_str().unwrap())).unwrap_err();
             assert!(err_non_exec.contains("not executable"));
         }
 
@@ -882,7 +960,8 @@ mod settings_tests {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let conf_path = manifest_dir.join("tauri.conf.json");
         let content = std::fs::read_to_string(&conf_path).expect("read tauri.conf.json");
-        let json: serde_json::Value = serde_json::from_str(&content).expect("parse tauri.conf.json");
+        let json: serde_json::Value =
+            serde_json::from_str(&content).expect("parse tauri.conf.json");
         let csp = json["app"]["security"]["csp"].as_str().expect("csp string");
 
         // Parse directives
@@ -928,10 +1007,13 @@ mod settings_tests {
         let main_only_path = manifest_dir.join("capabilities/main-only.json");
 
         let default_content = std::fs::read_to_string(&default_path).expect("read default.json");
-        let main_only_content = std::fs::read_to_string(&main_only_path).expect("read main-only.json");
+        let main_only_content =
+            std::fs::read_to_string(&main_only_path).expect("read main-only.json");
 
-        let default_json: serde_json::Value = serde_json::from_str(&default_content).expect("parse default.json");
-        let main_only_json: serde_json::Value = serde_json::from_str(&main_only_content).expect("parse main-only.json");
+        let default_json: serde_json::Value =
+            serde_json::from_str(&default_content).expect("parse default.json");
+        let main_only_json: serde_json::Value =
+            serde_json::from_str(&main_only_content).expect("parse main-only.json");
 
         let sensitive = [
             "core:webview:allow-create-webview",
@@ -984,7 +1066,10 @@ mod settings_tests {
         let content = std::fs::read_to_string(&html_browser_path).expect("read HtmlBrowser.tsx");
 
         // Must contain iframe
-        assert!(content.contains("<iframe"), "HtmlBrowser must contain <iframe");
+        assert!(
+            content.contains("<iframe"),
+            "HtmlBrowser must contain <iframe"
+        );
         // Must contain sandbox="allow-scripts"
         assert!(
             content.contains("sandbox=\"allow-scripts\""),
@@ -997,4 +1082,3 @@ mod settings_tests {
         );
     }
 }
-

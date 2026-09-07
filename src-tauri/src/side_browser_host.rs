@@ -114,9 +114,19 @@ fn validate_label(label: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_side_label(label: &str) -> Result<(), String> {
+pub(crate) const FIRST_PARTY_SIDE_TARGET_ERR: &str = "refusing to target a first-party webview";
+
+pub(crate) fn is_first_party_webview_label(label: &str) -> bool {
+    let t = label.trim();
+    matches!(t, "main" | "pet" | "theme-editor") || t.starts_with("session-")
+}
+
+pub(crate) fn validate_side_label(label: &str) -> Result<(), String> {
     validate_label(label)?;
-    if !label.starts_with(LABEL_PREFIX) {
+    if is_first_party_webview_label(label) {
+        return Err(FIRST_PARTY_SIDE_TARGET_ERR.into());
+    }
+    if !label.trim().starts_with(LABEL_PREFIX) {
         return Err(format!("side browser label must start with {LABEL_PREFIX}"));
     }
     Ok(())
@@ -143,7 +153,7 @@ fn get_side_webview<R: tauri::Runtime>(
     app: &AppHandle<R>,
     label: &str,
 ) -> Result<tauri::Webview<R>, String> {
-    validate_label(label)?;
+    validate_side_label(label)?;
     app.get_webview(label)
         .ok_or_else(|| format!("side browser webview not found: {label}"))
 }
@@ -683,7 +693,7 @@ pub fn current_url(app: &AppHandle, label: String) -> Result<String, String> {
 /// needs the platform runloop, and `recv_timeout` would otherwise freeze
 /// the app (up to 15s) whenever the child document is navigating.
 pub fn eval(app: &AppHandle, label: String, script: String) -> Result<String, String> {
-    validate_label(&label)?;
+    validate_side_label(&label)?;
     if script.trim().is_empty() {
         return Err("script empty".into());
     }
@@ -728,6 +738,26 @@ mod tests {
         assert!(validate_label("../x").is_err());
         assert!(validate_side_label("resource-browser-x").is_ok());
         assert!(validate_side_label("other").is_err());
+        assert!(validate_side_label("main").is_err());
+        assert!(validate_side_label("session-x").is_err());
+        assert!(validate_side_label("pet").is_err());
+        assert!(validate_side_label("theme-editor").is_err());
+    }
+
+    #[test]
+    fn eval_rejects_first_party_labels() {
+        for label in ["main", "session-abc", "pet", "theme-editor"] {
+            let err = validate_side_label(label).unwrap_err();
+            assert!(
+                err.to_ascii_lowercase().contains("first-party"),
+                "{label}: {err}"
+            );
+            assert!(
+                !err.to_ascii_lowercase().contains("resource-browser"),
+                "{label}: {err}"
+            );
+        }
+        assert!(validate_side_label("resource-browser-tab1").is_ok());
     }
 
     #[test]

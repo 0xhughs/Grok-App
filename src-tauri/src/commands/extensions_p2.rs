@@ -1,4 +1,3 @@
-
 fn parse_plugin_list_json(
     raw: &str,
     disabled: &std::collections::HashSet<String>,
@@ -32,13 +31,7 @@ fn parse_plugin_list_json(
             .filter(|s| !s.is_empty());
         let marketplace = item
             .get("marketplace")
-            .and_then(|x| {
-                if x.is_null() {
-                    None
-                } else {
-                    x.as_str()
-                }
-            })
+            .and_then(|x| if x.is_null() { None } else { x.as_str() })
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         let path = item
@@ -461,9 +454,12 @@ pub fn plugin_name_from_install_source(source: &str) -> Option<String> {
 #[tauri::command]
 pub async fn plugin_install(
     app: tauri::AppHandle,
+    window: tauri::Window,
     mgr: State<'_, Arc<SessionManager>>,
     source: String,
 ) -> Result<serde_json::Value, String> {
+    let caller = window.label().to_string();
+    require_main_window_label(&caller)?;
     let source = normalize_plugin_install_source(&source)?;
     let source_for_cmd = source.clone();
     let enable_name = plugin_name_from_install_source(&source);
@@ -480,10 +476,7 @@ pub async fn plugin_install(
             // Plugins stay off until enabled — enable so the install is usable immediately.
             let mut enable_msg: Option<String> = None;
             if let Some(name) = enable_name_for_cmd {
-                match run_grok_cli_args(
-                    &["plugin", "enable", &name],
-                    PLUGIN_CMD_TIMEOUT_SECS,
-                ) {
+                match run_grok_cli_args(&["plugin", "enable", &name], PLUGIN_CMD_TIMEOUT_SECS) {
                     Ok((e_out, e_err, e_ok)) => {
                         if e_ok {
                             enable_msg = Some(if e_out.is_empty() {
@@ -711,11 +704,7 @@ pub fn resolve_plugin_validate_path(path_or_name: Option<&str>) -> Option<String
     if name.is_empty() {
         return Some(raw);
     }
-    resolve_installed_plugin_path(name).or(Some(if name == raw {
-        raw
-    } else {
-        name.to_string()
-    }))
+    resolve_installed_plugin_path(name).or(Some(if name == raw { raw } else { name.to_string() }))
 }
 
 /// Validate a plugin manifest via `grok plugin validate [path]`.
@@ -724,17 +713,12 @@ pub fn resolve_plugin_validate_path(path_or_name: Option<&str>) -> Option<String
 /// - Always returns an envelope `{ ok, messages[] }` (never hard-fails on CLI-too-old)
 /// - Soft-fail: older CLIs without `plugin validate` → `ok: false`, `reason: "cli_too_old"`
 #[tauri::command]
-pub async fn plugin_validate(
-    path_or_name: Option<String>,
-) -> Result<serde_json::Value, String> {
+pub async fn plugin_validate(path_or_name: Option<String>) -> Result<serde_json::Value, String> {
     let path_or_name_owned = path_or_name.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let resolved = resolve_plugin_validate_path(path_or_name_owned.as_deref());
         let run = match resolved.as_deref() {
-            Some(p) => run_grok_cli_args(
-                &["plugin", "validate", p],
-                PLUGIN_CMD_TIMEOUT_SECS,
-            ),
+            Some(p) => run_grok_cli_args(&["plugin", "validate", p], PLUGIN_CMD_TIMEOUT_SECS),
             None => run_grok_cli_args(&["plugin", "validate"], PLUGIN_CMD_TIMEOUT_SECS),
         };
         (resolved, run)
@@ -800,11 +784,9 @@ pub async fn plugin_mcp_auth_status(name: String) -> Result<serde_json::Value, S
     if name.is_empty() {
         return Err("server name required".into());
     }
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::plugin_mcp::plugin_mcp_auth_status(&name)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || crate::plugin_mcp::plugin_mcp_auth_status(&name))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Save console four-token credentials for a plugin MCP (never logs secrets).
@@ -858,11 +840,9 @@ pub async fn plugin_mcp_auth_logout(name: String) -> Result<serde_json::Value, S
     if name.is_empty() {
         return Err("server name required".into());
     }
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::plugin_mcp::plugin_mcp_auth_logout(&name)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || crate::plugin_mcp::plugin_mcp_auth_logout(&name))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 include!("extensions_p2_tests.rs");

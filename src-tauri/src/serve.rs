@@ -672,9 +672,12 @@ pub async fn serve_status() -> Result<ServeStatusDto, String> {
 /// Returns status **including** one-time full `connectionUrl` / `connectionCli` for copy.
 #[tauri::command]
 pub async fn serve_start(
+    window: tauri::Window,
     bind: Option<String>,
     remote: Option<String>,
 ) -> Result<ServeStatusDto, String> {
+    let caller = window.label().to_string();
+    crate::commands::require_main_window_label(&caller)?;
     tauri::async_runtime::spawn_blocking(move || {
         let current = collect_status_sync(false);
         if current.state == "running" && current.tracked_pid.is_some() {
