@@ -486,24 +486,34 @@ pub fn build_workflow_run_prompt(name: &str, mode: &str) -> String {
     }
 }
 
+/// Official_aux leftover-child denials. Do not add `workflow` (the child must
+/// still be able to call the workflow tool).
+const WORKFLOW_DISALLOWED_TOOLS: &str = "run_terminal_cmd,run_terminal_command,search_replace,write,Agent,spawn_subagent,bash,bash_tool";
+
 /// Build headless argv (without binary path). Pure for tests.
-pub fn workflow_run_args(prompt: &str, mode: &str) -> Vec<String> {
+pub fn workflow_run_args(prompt: &str, mode: &str, is_yolo: bool) -> Vec<String> {
     let max_turns = if normalize_run_mode(mode) == "launch" {
         "8"
     } else {
         "4"
     };
-    vec![
+    let mut args = vec![
         "-p".into(),
         prompt.to_string(),
-        "--always-approve".into(),
+        "--no-subagents".into(),
+        "--disallowed-tools".into(),
+        WORKFLOW_DISALLOWED_TOOLS.into(),
         "--max-turns".into(),
         max_turns.into(),
         "--effort".into(),
         "low".into(),
         "--output-format".into(),
         "plain".into(),
-    ]
+    ];
+    if is_yolo {
+        args.push("--always-approve".into());
+    }
+    args
 }
 
 fn clamp_timeout_ms(ms: Option<u64>, mode: &str) -> u64 {
@@ -594,8 +604,9 @@ pub fn run_workflow(
     project_path: Option<&str>,
     mode: Option<&str>,
     timeout_ms: Option<u64>,
+    session_id: Option<&str>,
 ) -> WorkflowRunResult {
-    run_workflow_inner(None, name, project_path, mode, timeout_ms)
+    run_workflow_inner(None, name, project_path, mode, timeout_ms, session_id)
 }
 
 /// Same as [`run_workflow`] but streams progress to the UI via `app`.
@@ -605,8 +616,9 @@ pub fn run_workflow_with_app(
     project_path: Option<&str>,
     mode: Option<&str>,
     timeout_ms: Option<u64>,
+    session_id: Option<&str>,
 ) -> WorkflowRunResult {
-    run_workflow_inner(Some(&app), name, project_path, mode, timeout_ms)
+    run_workflow_inner(Some(&app), name, project_path, mode, timeout_ms, session_id)
 }
 
 fn emit_workflow_progress(
@@ -642,6 +654,7 @@ fn run_workflow_inner(
     project_path: Option<&str>,
     mode: Option<&str>,
     timeout_ms: Option<u64>,
+    session_id: Option<&str>,
 ) -> WorkflowRunResult {
     let started = Instant::now();
     let mode_s = normalize_run_mode(mode.unwrap_or("validate"));
@@ -692,7 +705,8 @@ fn run_workflow_inner(
     let cli_version = probe.version.clone();
 
     let prompt = build_workflow_run_prompt(name_trim, mode_s);
-    let args = workflow_run_args(&prompt, mode_s);
+    let is_yolo = crate::batch_agents::invoking_session_is_yolo(session_id);
+    let args = workflow_run_args(&prompt, mode_s, is_yolo);
     let timeout = Duration::from_millis(clamp_timeout_ms(timeout_ms, mode_s));
 
     let cwd = project_path
@@ -1034,19 +1048,73 @@ mod tests {
 
     #[test]
     fn run_args_include_plain_and_approve() {
-        let a = workflow_run_args("hello", "validate");
+        let a = workflow_run_args("hello", "validate", false);
         assert!(a.contains(&"-p".into()));
         assert!(a.contains(&"hello".into()));
-        assert!(a.contains(&"--always-approve".into()));
+        assert!(!a.contains(&"--always-approve".into()));
         assert!(a.contains(&"plain".into()));
         assert!(a.contains(&"4".into()));
-        let b = workflow_run_args("hello", "launch");
+        let b = workflow_run_args("hello", "launch", false);
         assert!(b.contains(&"8".into()));
     }
 
     #[test]
+    fn workflow_run_args_restricted_and_conditional_always_approve() {
+        let ask_args = workflow_run_args("hello", "validate", false);
+        assert!(ask_args.contains(&"--no-subagents".into()));
+        assert!(ask_args.contains(&"--disallowed-tools".into()));
+        assert!(!ask_args.contains(&"--always-approve".into()));
+        assert!(ask_args.contains(&"plain".into()));
+        assert!(ask_args.contains(&"4".into()));
+        let dt_idx = ask_args
+            .iter()
+            .position(|x| x == "--disallowed-tools")
+            .unwrap();
+        let dt_val = &ask_args[dt_idx + 1];
+        for tok in [
+            "run_terminal_cmd",
+            "run_terminal_command",
+            "search_replace",
+            "write",
+            "Agent",
+            "spawn_subagent",
+            "bash",
+            "bash_tool",
+        ] {
+            assert!(dt_val.contains(tok), "missing {tok}");
+        }
+        assert!(
+            !dt_val.split(',').any(|t| t == "workflow"),
+            "must not deny the workflow tool"
+        );
+
+        let yolo_args = workflow_run_args("hello", "launch", true);
+        assert!(yolo_args.contains(&"--no-subagents".into()));
+        assert!(yolo_args.contains(&"--disallowed-tools".into()));
+        assert!(yolo_args.contains(&"--always-approve".into()));
+        assert!(yolo_args.contains(&"8".into()));
+        let yolo_idx = yolo_args
+            .iter()
+            .position(|x| x == "--disallowed-tools")
+            .unwrap();
+        let yolo_dt = &yolo_args[yolo_idx + 1];
+        for tok in [
+            "run_terminal_cmd",
+            "run_terminal_command",
+            "search_replace",
+            "write",
+            "Agent",
+            "spawn_subagent",
+            "bash",
+            "bash_tool",
+        ] {
+            assert!(yolo_dt.contains(tok), "missing {tok}");
+        }
+    }
+
+    #[test]
     fn invalid_name_soft_fails_without_spawn() {
-        let r = run_workflow("../evil", None, Some("validate"), Some(5_000));
+        let r = run_workflow("../evil", None, Some("validate"), Some(5_000), None);
         assert!(!r.ok);
         assert_eq!(r.reason, "invalid_name");
         assert_eq!(r.invoke_path, "headless_workflow_tool");

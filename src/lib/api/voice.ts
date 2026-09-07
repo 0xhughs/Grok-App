@@ -122,11 +122,13 @@ export async function batchAgentsHeadless(opts: {
   projectPath: string;
   prompt: string;
   timeoutMs?: number | null;
+  sessionId?: string | null;
 }): Promise<BatchAgentsHeadlessResult> {
   return invoke<BatchAgentsHeadlessResult>("batch_agents_headless", {
     projectPath: opts.projectPath,
     prompt: opts.prompt,
     timeoutMs: opts.timeoutMs ?? null,
+    sessionId: opts.sessionId ?? null,
   });
 }
 

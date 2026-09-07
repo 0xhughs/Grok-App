@@ -701,6 +701,15 @@ fn refresh_token_grant(
     serde_json::from_str(&text).map_err(|e| format!("refresh token JSON: {e}"))
 }
 
+/// Write MCP OAuth `config.toml` (agent-home and/or `~/.grok`) at Unix 0600.
+fn write_oauth_config_toml(
+    path: impl AsRef<std::path::Path>,
+    contents: impl AsRef<[u8]>,
+) -> Result<(), String> {
+    crate::agent_home_config::write_private_agent_home_file(path, contents)
+        .map_err(|e| e.to_string())
+}
+
 /// Persist access token into MCP config headers + credential store (full OAuth fields).
 fn persist_oauth_tokens(
     server: &str,
@@ -768,7 +777,7 @@ fn persist_oauth_tokens(
             Some(&headers),
             def.transport.as_deref().or(Some("http")),
         );
-        std::fs::write(&path, next).map_err(|e| e.to_string())?;
+        write_oauth_config_toml(&path, next)?;
         tracing::info!("mcp oauth: wrote Bearer for {server} → {}", path.display());
     }
 
@@ -854,12 +863,8 @@ fn write_mcp_credentials_full(
             let _ = std::fs::create_dir_all(parent);
         }
         let raw = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
-        std::fs::write(&path, raw).map_err(|e| e.to_string())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
+        crate::agent_home_config::write_private_agent_home_file(&path, raw)
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -1312,5 +1317,163 @@ mod tests {
     fn protected_resource_meta_urls_rejects_garbage() {
         assert!(protected_resource_meta_urls("not a url").is_empty());
         assert!(protected_resource_meta_urls("").is_empty());
+    }
+
+    fn temp_app_home(label: &str) -> PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let p = std::env::temp_dir().join(format!(
+            "grok-mcp-oauth-{}-{}-{}",
+            label,
+            std::process::id(),
+            nanos
+        ));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn restore_env(key: &str, prev: Option<String>) {
+        match prev {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn write_mcp_credentials_full_enforces_0600() {
+        let _lock = crate::paths::APP_HOME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = temp_app_home("creds0600");
+        let home_tmp = temp_app_home("creds0600-home");
+        let prev_app = std::env::var("GROK_APP_HOME").ok();
+        let prev_home = std::env::var("HOME").ok();
+        std::env::set_var("GROK_APP_HOME", &tmp);
+        std::env::set_var("HOME", &home_tmp);
+
+        let _ = crate::paths::ensure_app_dirs();
+        let mut s = store::load_settings();
+        s.session_data_mode = "independent".into();
+        store::save_settings(&s).unwrap();
+
+        let tok = TokenResponse {
+            access_token: "at-test".into(),
+            refresh_token: Some("rt-test".into()),
+            expires_in: Some(3600),
+            token_type: Some("Bearer".into()),
+            scope: None,
+        };
+        write_mcp_credentials_full(
+            "seed-oauth",
+            &tok,
+            "client-id",
+            None,
+            "https://example.com/token",
+            "https://example.com/mcp",
+        )
+        .unwrap();
+
+        let agent_path =
+            crate::paths::resolve_agent_grok_home("independent").join("mcp_credentials.json");
+        let user_path = home_tmp.join(".grok").join("mcp_credentials.json");
+        assert!(agent_path.is_file(), "{}", agent_path.display());
+        assert!(user_path.is_file(), "{}", user_path.display());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for path in [&agent_path, &user_path] {
+                let meta = std::fs::metadata(path).unwrap();
+                assert_eq!(
+                    meta.permissions().mode() & 0o777,
+                    0o600,
+                    "{}",
+                    path.display()
+                );
+            }
+        }
+
+        restore_env("GROK_APP_HOME", prev_app);
+        restore_env("HOME", prev_home);
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::remove_dir_all(&home_tmp);
+    }
+
+    #[test]
+    fn persist_oauth_config_toml_enforces_0600() {
+        let _lock = crate::paths::APP_HOME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = temp_app_home("persist0600");
+        let home_tmp = temp_app_home("persist0600-home");
+        let prev_app = std::env::var("GROK_APP_HOME").ok();
+        let prev_home = std::env::var("HOME").ok();
+        std::env::set_var("GROK_APP_HOME", &tmp);
+        std::env::set_var("HOME", &home_tmp);
+
+        let _ = crate::paths::ensure_app_dirs();
+        let mut s = store::load_settings();
+        s.session_data_mode = "independent".into();
+        store::save_settings(&s).unwrap();
+
+        // `list_mcp_server_defs` prefers live `grok mcp list` and may ignore a
+        // seeded config.toml. persist_oauth_tokens writes via
+        // write_oauth_config_toml (not fs::write); assert 0600 on that helper.
+        let seed = concat!(
+            "[mcp_servers.seed-oauth]\n",
+            "transport = \"http\"\n",
+            "url = \"https://example.com/mcp\"\n",
+        );
+        let agent_cfg = crate::extensions::mcp_agent_config_path("independent");
+        write_oauth_config_toml(&agent_cfg, seed).unwrap();
+        crate::extensions::invalidate_mcp_cache();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = std::fs::metadata(&agent_cfg).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        }
+
+        let defs = crate::extensions::list_mcp_server_defs(None);
+        let seed_visible = defs.iter().any(|d| d.name == "seed-oauth");
+        eprintln!(
+            "persist_oauth_config_toml_enforces_0600 seed_visible={seed_visible} names={:?}",
+            defs.iter().map(|d| d.name.as_str()).collect::<Vec<_>>()
+        );
+        if seed_visible {
+            let tok = TokenResponse {
+                access_token: "at-persist".into(),
+                refresh_token: None,
+                expires_in: Some(3600),
+                token_type: Some("Bearer".into()),
+                scope: None,
+            };
+            persist_oauth_tokens(
+                "seed-oauth",
+                &tok,
+                "client-id",
+                None,
+                "https://example.com/token",
+                "https://example.com/mcp",
+                None,
+            )
+            .expect("persist_oauth_tokens should see the seeded HTTP MCP server");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let meta = std::fs::metadata(&agent_cfg).unwrap();
+                assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+            }
+        }
+
+        restore_env("GROK_APP_HOME", prev_app);
+        restore_env("HOME", prev_home);
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::remove_dir_all(&home_tmp);
     }
 }

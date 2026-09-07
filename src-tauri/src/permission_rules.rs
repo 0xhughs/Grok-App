@@ -437,7 +437,8 @@ pub fn save_permission_rules(rules: &PermissionRules) -> Result<PermissionRulesR
     let existing = fs::read_to_string(&path).unwrap_or_default();
     let normalized = normalize_rules(rules);
     let next = set_permission_rules_in_toml(&existing, &normalized);
-    fs::write(&path, &next).map_err(|e| format!("write config: {e}"))?;
+    crate::agent_home_config::write_private_agent_home_file(&path, &next)
+        .map_err(|e| format!("write config: {e}"))?;
 
     // Never log rule text (may include private paths). Counts + path only.
     tracing::info!(
@@ -607,5 +608,64 @@ ask = ["Edit"]
         assert!(normalize_action("maybe").is_none());
         let d = dedupe_rules(&["a".into(), " a ".into(), "b".into(), "".into()]);
         assert_eq!(d, vec!["a", "b"]);
+    }
+
+    fn temp_app_home(label: &str) -> PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let p = std::env::temp_dir().join(format!(
+            "grok-perm-rules-{}-{}-{}",
+            label,
+            std::process::id(),
+            nanos
+        ));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn save_permission_rules_enforces_0600() {
+        let _lock = crate::paths::APP_HOME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = temp_app_home("save0600");
+        let prev = std::env::var("GROK_APP_HOME").ok();
+        std::env::set_var("GROK_APP_HOME", &tmp);
+
+        let _ = ensure_app_dirs();
+        let mut s = store::load_settings();
+        s.session_data_mode = "independent".into();
+        store::save_settings(&s).unwrap();
+
+        let saved = save_permission_rules(&PermissionRules {
+            allow: vec!["Bash(git *)".into()],
+            deny: vec!["Bash(rm *)".into()],
+            ask: vec!["Edit".into()],
+        })
+        .unwrap();
+        assert!(saved.file_exists);
+        assert_eq!(saved.session_data_mode, "independent");
+
+        let path = agent_config_toml();
+        let disk = fs::read_to_string(&path).unwrap();
+        assert!(disk.contains("Bash(git *)"), "{disk}");
+        assert!(disk.contains("[permission]"), "{disk}");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = fs::metadata(&path).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        }
+
+        match prev {
+            Some(v) => std::env::set_var("GROK_APP_HOME", v),
+            None => std::env::remove_var("GROK_APP_HOME"),
+        }
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

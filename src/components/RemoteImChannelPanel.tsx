@@ -43,6 +43,7 @@ import {
   toggleSecretReveal,
   validateBindFields,
 } from "@/lib/remoteIm";
+import { allowFromBlocksSave } from "@/lib/remoteSecurityOps";
 import type { TestConnectionResult } from "@/lib/remoteIm/bridgeClient";
 import {
   remoteImScanBegin,
@@ -270,6 +271,8 @@ export function RemoteImChannelPanel({
       secrets?: Record<string, string>;
       /** Keep secret fields visible in paste form after save (scan fill-back) */
       keepSecretsVisible?: boolean;
+      /** Effective allow-from for this save (Weixin scan ownerOpenId). */
+      acl?: { allowFrom?: string };
     }): Promise<boolean> => {
       const sch = getChannelSchema(channelId);
       if (!sch || isRetiredChannel(sch) || !sch.implemented) return false;
@@ -277,6 +280,13 @@ export function RemoteImChannelPanel({
       setFormError(null);
       const nextValues = { ...values, ...override?.values };
       const nextSecrets = { ...secrets, ...override?.secrets };
+      const valuesAllowFrom = override?.values?.allow_from;
+      const effectiveAllowFrom =
+        override?.acl?.allowFrom != null
+          ? String(override.acl.allowFrom)
+          : typeof valuesAllowFrom === "string"
+            ? valuesAllowFrom
+            : acl.allowFrom;
 
       const merged: Record<string, unknown> = { ...nextValues };
       for (const [k, v] of Object.entries(nextSecrets)) {
@@ -338,6 +348,12 @@ export function RemoteImChannelPanel({
         return false;
       }
 
+      // Fail-closed: empty or catch-all allow-from cannot enable (slice 02 parity).
+      if (allowFromBlocksSave(effectiveAllowFrom)) {
+        setFormError(t("settings.remoteIm.err.allowFromRequired"));
+        return false;
+      }
+
       const ref = credentialsRefFor(channelId, instance.id);
       if (hasNewSecrets) {
         await remoteImSecretsPut({
@@ -348,16 +364,7 @@ export function RemoteImChannelPanel({
         });
       }
 
-      if (acl.allowFrom != null) {
-        options.allow_from = acl.allowFrom;
-      }
-
-      // Fail-closed: empty allow list cannot enable (security default).
-      const allowRaw = String(acl.allowFrom ?? "").trim();
-      if (!allowRaw) {
-        setFormError(t("settings.remoteIm.err.allowFromRequired"));
-        return false;
-      }
+      options.allow_from = effectiveAllowFrom;
 
       // §3.2 / §6.1: group_reply_all is inverse of require @mention (ACL control).
       options.group_reply_all = !acl.requireMention;
@@ -365,6 +372,7 @@ export function RemoteImChannelPanel({
 
       const nextAcl: AclConfig = {
         ...acl,
+        allowFrom: String(effectiveAllowFrom ?? ""),
         shareSessionInChannel:
           !!options.share_session_in_channel || acl.shareSessionInChannel,
       };
@@ -393,6 +401,7 @@ export function RemoteImChannelPanel({
       await onSave(hostSaved ?? saved);
 
       // Sync local form to complete record; keep secrets visible after scan
+      setAcl(nextAcl);
       setValues((prev) => ({ ...prev, ...nextValues }));
       if (override?.keepSecretsVisible) {
         setSecrets(secretPayload);
@@ -449,6 +458,9 @@ export function RemoteImChannelPanel({
         const fillSecrets: Record<string, string> = isWeixin
           ? { token: r.appSecret }
           : { app_secret: r.appSecret };
+        if (isWeixin && r.ownerOpenId) {
+          setAcl((prev) => ({ ...prev, allowFrom: r.ownerOpenId as string }));
+        }
         setValues((prev) => ({ ...prev, ...fillValues }));
         setSecrets((prev) => ({ ...prev, ...fillSecrets }));
         setBindTab("paste");
@@ -459,6 +471,9 @@ export function RemoteImChannelPanel({
           values: fillValues,
           secrets: fillSecrets,
           keepSecretsVisible: true,
+          ...(isWeixin && r.ownerOpenId
+            ? { acl: { allowFrom: r.ownerOpenId } }
+            : {}),
         });
         if (!ok && !cancelled) {
           setFormError(t("settings.remoteIm.scan.autoSaveFailed"));

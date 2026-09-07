@@ -1,7 +1,7 @@
 //! Headless probe for Grok Build `--output-format streaming-messages-json`
 //! (CLI 0.2.117+).
 //!
-//! Spawns a short always-approve turn, writes NDJSON to a temp file, and
+//! Spawns a short restricted Ask-mode turn, writes NDJSON to a temp file, and
 //! returns the body (size-capped) for Settings diagnostics.
 //! Soft-fails when the CLI is missing or older than 0.2.117 (no spawn).
 //! Never logs stdout body or secrets — only reason / line count / duration.
@@ -32,6 +32,33 @@ pub const MAX_RAW_BYTES: usize = 512 * 1024;
 
 /// Headless probe timeout.
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Official_aux leftover-child denials.
+const STREAMING_DISALLOWED_TOOLS: &str = "run_terminal_cmd,run_terminal_command,search_replace,write,Agent,spawn_subagent,bash,bash_tool";
+
+/// Build headless argv for the streaming-messages-json probe (without binary).
+pub fn streaming_probe_args(include_partial: bool, is_yolo: bool) -> Vec<String> {
+    let mut args = vec![
+        "-p".into(),
+        PROBE_PROMPT.to_string(),
+        "--no-subagents".into(),
+        "--disallowed-tools".into(),
+        STREAMING_DISALLOWED_TOOLS.into(),
+        "--max-turns".into(),
+        "1".into(),
+        "--effort".into(),
+        "low".into(),
+        "--output-format".into(),
+        OUTPUT_FORMAT.into(),
+    ];
+    if include_partial {
+        args.push("--include-partial-messages".into());
+    }
+    if is_yolo {
+        args.push("--always-approve".into());
+    }
+    args
+}
 
 fn min_version_str() -> String {
     let (a, b, c) = MIN_CLI_VERSION;
@@ -179,18 +206,8 @@ pub fn probe_streaming_messages_json(include_partial: bool) -> StreamingMessages
     let out_path: PathBuf = tmp_dir.join(format!("probe-{stamp}.ndjson"));
 
     let mut cmd = Command::new(&cli_path);
-    cmd.arg("-p")
-        .arg(PROBE_PROMPT)
-        .arg("--always-approve")
-        .arg("--max-turns")
-        .arg("1")
-        .arg("--effort")
-        .arg("low")
-        .arg("--output-format")
-        .arg(OUTPUT_FORMAT);
-    if include_partial {
-        cmd.arg("--include-partial-messages");
-    }
+    // Probe has no session → Ask (never YOLO).
+    cmd.args(streaming_probe_args(include_partial, false));
     // Keep cwd neutral; do not inherit project secrets paths into logs.
     cmd.current_dir(std::env::temp_dir());
     process_util::apply_no_window_std(&mut cmd);
@@ -343,5 +360,62 @@ mod tests {
     fn count_nonempty_lines_skips_blanks() {
         assert_eq!(count_nonempty_lines("a\n\nb\n"), 2);
         assert_eq!(count_nonempty_lines(""), 0);
+    }
+
+    #[test]
+    fn streaming_probe_args_restricted_and_conditional_always_approve() {
+        let ask_args = streaming_probe_args(false, false);
+        assert!(ask_args.contains(&"-p".into()));
+        assert!(ask_args.contains(&PROBE_PROMPT.to_string()));
+        assert!(ask_args.contains(&"--max-turns".into()));
+        assert!(ask_args.contains(&"1".into()));
+        assert!(ask_args.contains(&"--effort".into()));
+        assert!(ask_args.contains(&"low".into()));
+        assert!(ask_args.contains(&"--output-format".into()));
+        assert!(ask_args.contains(&OUTPUT_FORMAT.to_string()));
+        assert!(!ask_args.contains(&"--include-partial-messages".into()));
+        assert!(ask_args.contains(&"--no-subagents".into()));
+        assert!(ask_args.contains(&"--disallowed-tools".into()));
+        assert!(!ask_args.contains(&"--always-approve".into()));
+        let dt_idx = ask_args
+            .iter()
+            .position(|x| x == "--disallowed-tools")
+            .unwrap();
+        let dt_val = &ask_args[dt_idx + 1];
+        for tok in [
+            "run_terminal_cmd",
+            "run_terminal_command",
+            "search_replace",
+            "write",
+            "Agent",
+            "spawn_subagent",
+            "bash",
+            "bash_tool",
+        ] {
+            assert!(dt_val.contains(tok), "missing {tok}");
+        }
+
+        let yolo_partial = streaming_probe_args(true, true);
+        assert!(yolo_partial.contains(&"--include-partial-messages".into()));
+        assert!(yolo_partial.contains(&"--no-subagents".into()));
+        assert!(yolo_partial.contains(&"--disallowed-tools".into()));
+        assert!(yolo_partial.contains(&"--always-approve".into()));
+        let yolo_idx = yolo_partial
+            .iter()
+            .position(|x| x == "--disallowed-tools")
+            .unwrap();
+        let yolo_dt = &yolo_partial[yolo_idx + 1];
+        for tok in [
+            "run_terminal_cmd",
+            "run_terminal_command",
+            "search_replace",
+            "write",
+            "Agent",
+            "spawn_subagent",
+            "bash",
+            "bash_tool",
+        ] {
+            assert!(yolo_dt.contains(tok), "missing {tok}");
+        }
     }
 }

@@ -78,6 +78,16 @@ export function summarizeAllowFromRaw(raw: unknown): AllowFromSummary {
   return summarizeAllowFrom(parseAllowFromList(raw));
 }
 
+/**
+ * True when Save & connect must refuse: no entries after parse, or any
+ * exact `*` catch-all entry (same as Rust `is_wildcard_entry`).
+ * A token that merely contains `*` (e.g. `alice*`) is a literal id.
+ */
+export function allowFromBlocksSave(raw: unknown): boolean {
+  const entries = parseAllowFromList(raw);
+  return entries.length === 0 || entries.some((e) => e.wildcard);
+}
+
 /** True when allow-from is open (*) or effectively empty-as-open for risk. */
 export function isAllowFromOpen(raw: unknown): boolean {
   return summarizeAllowFromRaw(raw) === "open_acl";

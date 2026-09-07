@@ -662,7 +662,8 @@ pub fn save_memory_embed_config(
 
     let existing = fs::read_to_string(&path).unwrap_or_default();
     let next = apply_memory_embed_patch(&existing, patch);
-    fs::write(&path, &next).map_err(|e| format!("write config: {e}"))?;
+    crate::agent_home_config::write_private_agent_home_file(&path, &next)
+        .map_err(|e| format!("write config: {e}"))?;
 
     tracing::info!(
         path = %path.display(),
@@ -869,6 +870,13 @@ api_key = "sk-abcdefghijklmnopqrstuvwxyz0123"
         assert_eq!(saved.embedding_dimensions, Some(1024));
         assert_eq!(saved.mmr_enabled, Some(false));
         assert!(saved.file_exists);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = fs::metadata(agent_config_toml()).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        }
 
         let cleared = save_memory_embed_config(&MemoryEmbedConfigPatch {
             clear_embedding_model: Some(true),

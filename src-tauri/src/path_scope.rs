@@ -97,9 +97,9 @@ pub fn is_denied_target(path: &Path) -> bool {
         .filter_map(|c| c.as_os_str().to_str())
         .collect();
 
-    // 1. Check for denied directory components (.ssh, .aws, .gnupg)
+    // 1. Check for denied directory components (.ssh, .aws, .gnupg, .kube)
     for c in &comps {
-        if *c == ".ssh" || *c == ".aws" || *c == ".gnupg" {
+        if *c == ".ssh" || *c == ".aws" || *c == ".gnupg" || *c == ".kube" {
             return true;
         }
     }
@@ -113,7 +113,11 @@ pub fn is_denied_target(path: &Path) -> bool {
 
     // 3. Check filename-specific denies
     if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
-        if file_name == "secrets.json" || file_name == "session-api.json" {
+        if file_name == "secrets.json"
+            || file_name == "session-api.json"
+            || file_name == ".netrc"
+            || file_name == ".npmrc"
+        {
             return true;
         }
 
@@ -125,8 +129,19 @@ pub fn is_denied_target(path: &Path) -> bool {
             }
         }
 
+        // agent-home/config.toml only (not every config.toml).
+        if file_name == "config.toml" && comps.len() >= 2 && comps[comps.len() - 2] == "agent-home"
+        {
+            return true;
+        }
+
+        // .docker/config.json only (not all of .docker).
+        if file_name == "config.json" && comps.len() >= 2 && comps[comps.len() - 2] == ".docker" {
+            return true;
+        }
+
         // 4. remote-im/*.json
-        if file_name.ends_with(".json") && comps.iter().any(|c| *c == "remote-im") {
+        if file_name.ends_with(".json") && comps.contains(&"remote-im") {
             return true;
         }
     }
@@ -195,6 +210,16 @@ pub fn require_allowed(path: &Path) -> Result<PathBuf, String> {
 /// `tokio::sync` so async media_server tests can hold it across `.await`.
 #[cfg(test)]
 pub(crate) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Grant `path` for the duration of `f` while holding [`TEST_LOCK`].
+#[cfg(test)]
+pub(crate) fn with_granted_path(path: &Path, f: impl FnOnce()) {
+    let _g = TEST_LOCK.blocking_lock();
+    extra_grants().write().clear();
+    grant_path(path);
+    f();
+    extra_grants().write().clear();
+}
 
 #[cfg(test)]
 mod tests {
@@ -375,6 +400,69 @@ mod tests {
 
             assert!(is_allowed(&normal_file));
             assert!(require_allowed(&normal_file).is_ok());
+        });
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn denies_s4_leftover_targets_even_under_allowed_roots() {
+        let tmp =
+            std::env::temp_dir().join(format!("grok-scope-s4-leftover-{}", std::process::id()));
+        let project = tmp.join("proj");
+        let app = tmp.join("app");
+        let _ = fs::create_dir_all(&project);
+        let _ = fs::create_dir_all(&app);
+
+        let agent_home = app.join("agent-home");
+        let _ = fs::create_dir_all(&agent_home);
+        let agent_home_toml = agent_home.join("config.toml");
+        fs::write(&agent_home_toml, "").unwrap();
+
+        let netrc = project.join(".netrc");
+        fs::write(&netrc, "").unwrap();
+
+        let kube_dir = project.join(".kube");
+        let _ = fs::create_dir_all(&kube_dir);
+        let kube_config = kube_dir.join("config");
+        fs::write(&kube_config, "").unwrap();
+
+        let docker_dir = project.join(".docker");
+        let _ = fs::create_dir_all(&docker_dir);
+        let docker_cfg = docker_dir.join("config.json");
+        fs::write(&docker_cfg, "{}").unwrap();
+        let docker_daemon = docker_dir.join("daemon.json");
+        fs::write(&docker_daemon, "{}").unwrap();
+
+        let npmrc = project.join(".npmrc");
+        fs::write(&npmrc, "").unwrap();
+
+        let project_toml = project.join("config.toml");
+        fs::write(&project_toml, "").unwrap();
+
+        with_isolated_roots(&project, &app, false, || {
+            assert!(is_denied_target(&agent_home_toml));
+            assert!(!is_allowed(&agent_home_toml));
+            assert!(is_denied_target(&netrc));
+            assert!(!is_allowed(&netrc));
+            assert!(is_denied_target(&kube_config));
+            assert!(!is_allowed(&kube_config));
+            assert!(is_denied_target(&kube_dir));
+            assert!(!is_allowed(&kube_dir));
+            assert!(is_denied_target(&docker_cfg));
+            assert!(!is_allowed(&docker_cfg));
+            assert!(is_denied_target(&npmrc));
+            assert!(!is_allowed(&npmrc));
+
+            assert!(!is_denied_target(&project_toml));
+            assert!(is_allowed(&project_toml));
+            assert!(!is_denied_target(&docker_daemon));
+
+            grant_path(&agent_home_toml);
+            assert!(
+                !is_allowed(&agent_home_toml),
+                "grant_path must not unlock agent-home/config.toml"
+            );
         });
 
         let _ = fs::remove_dir_all(&tmp);

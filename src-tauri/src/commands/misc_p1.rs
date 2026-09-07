@@ -103,10 +103,9 @@ pub async fn memory_search(
     let q = query;
     tokio::task::spawn_blocking(move || {
         // Soft-probe embedding.model for search_kind honesty (never runs vectors).
-        let embedding_configured =
-            crate::agent_memory_embed::load_memory_embed_config()
-                .map(|s| s.embedding_configured)
-                .unwrap_or(false);
+        let embedding_configured = crate::agent_memory_embed::load_memory_embed_config()
+            .map(|s| s.embedding_configured)
+            .unwrap_or(false);
         Ok(crate::agent_memory::search_workspace_memory_with_kind(
             &q,
             path.as_deref(),
@@ -183,7 +182,8 @@ pub async fn memory_embed_config_set(
     .await
     .map_err(|e| e.to_string())??;
 
-    mgr.soft_respawn_with_reason(&app, "memory_embed_config").await;
+    mgr.soft_respawn_with_reason(&app, "memory_embed_config")
+        .await;
     Ok(result)
 }
 
@@ -242,15 +242,15 @@ pub async fn agent_config_edit_set(
     .await
     .map_err(|e| e.to_string())??;
 
-    mgr.soft_respawn_with_reason(&app, "agent_config_edit").await;
+    mgr.soft_respawn_with_reason(&app, "agent_config_edit")
+        .await;
     Ok(result)
 }
 
 /// Read allowlisted privacy keys from active GROK_HOME config.toml (redacted).
 /// Soft-fails missing keys as null; never invents defaults.
 #[tauri::command]
-pub async fn privacy_config_get(
-) -> Result<crate::agent_privacy::PrivacyConfigSnapshot, String> {
+pub async fn privacy_config_get() -> Result<crate::agent_privacy::PrivacyConfigSnapshot, String> {
     tauri::async_runtime::spawn_blocking(crate::agent_privacy::load_privacy_config)
         .await
         .map_err(|e| e.to_string())?
@@ -310,7 +310,8 @@ pub async fn codebase_indexing_set(
     .await
     .map_err(|e| e.to_string())??;
 
-    mgr.soft_respawn_with_reason(&app, "codebase_indexing").await;
+    mgr.soft_respawn_with_reason(&app, "codebase_indexing")
+        .await;
     Ok(result)
 }
 
@@ -322,7 +323,6 @@ pub async fn codebase_indexing_set(
 // Install uses `plugin install <name|name@market|url> --trust` + soft-respawn.
 
 const PLUGIN_MARKETPLACE_MUTATE_TIMEOUT_SECS: u64 = 120;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -336,7 +336,6 @@ pub struct MarketplaceSourceDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -358,7 +357,6 @@ pub struct AvailablePluginDto {
     #[serde(default)]
     pub has_mcp: bool,
 }
-
 
 /// Parse `grok plugin marketplace list --json` (array or `{ sources: [...] }`).
 pub fn parse_marketplace_list_json(raw: &str) -> Result<Vec<MarketplaceSourceDto>, String> {
@@ -427,7 +425,6 @@ pub fn parse_marketplace_list_json(raw: &str) -> Result<Vec<MarketplaceSourceDto
     }
     Ok(out)
 }
-
 
 /// Fill skill/MCP/hooks/agents counts from `components` when top-level flags are empty.
 /// CLI often reports skill_count=0 / has_mcp=false while `components` is populated.
@@ -510,13 +507,7 @@ pub fn parse_available_plugins_json(raw: &str) -> Result<Vec<AvailablePluginDto>
         }
         let marketplace = item
             .get("marketplace")
-            .and_then(|x| {
-                if x.is_null() {
-                    None
-                } else {
-                    x.as_str()
-                }
-            })
+            .and_then(|x| if x.is_null() { None } else { x.as_str() })
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         let description = item
@@ -566,7 +557,6 @@ pub fn parse_available_plugins_json(raw: &str) -> Result<Vec<AvailablePluginDto>
     Ok(out)
 }
 
-
 pub fn normalize_marketplace_add_source(source: &str) -> Result<String, String> {
     let s = source.trim();
     if s.is_empty() {
@@ -584,9 +574,7 @@ pub fn resolve_marketplace_remove_arg(
     if raw.is_empty() {
         return Err("marketplace source name or URL required".into());
     }
-    let looks_like_url = raw.contains("://")
-        || raw.starts_with("git@")
-        || raw.ends_with(".git");
+    let looks_like_url = raw.contains("://") || raw.starts_with("git@") || raw.ends_with(".git");
     let looks_like_path = raw.starts_with('/')
         || raw.starts_with('~')
         || (raw.len() >= 3
@@ -603,20 +591,23 @@ pub fn resolve_marketplace_remove_arg(
         if let Some(url) = src.url.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
             return Ok(url.to_string());
         }
-        if let Some(path) = src.path.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        if let Some(path) = src
+            .path
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
             return Ok(path.to_string());
         }
     }
     Ok(raw.to_string())
 }
 
-
 pub fn normalize_marketplace_update_name(name: Option<&str>) -> Option<String> {
     name.map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
 }
-
 
 fn collect_marketplace_list() -> Result<Vec<MarketplaceSourceDto>, String> {
     let (stdout, stderr, ok) = run_grok_cli_args(
@@ -636,7 +627,6 @@ fn collect_marketplace_list() -> Result<Vec<MarketplaceSourceDto>, String> {
     parse_marketplace_list_json(&stdout)
 }
 
-
 fn collect_available_plugins() -> Result<Vec<AvailablePluginDto>, String> {
     let (stdout, stderr, ok) = run_grok_cli_args(
         &["plugin", "list", "--json", "--available"],
@@ -655,7 +645,6 @@ fn collect_available_plugins() -> Result<Vec<AvailablePluginDto>, String> {
     parse_available_plugins_json(&stdout)
 }
 
-
 /// List configured marketplace sources. Always Ok; error field on failure.
 #[tauri::command]
 pub async fn marketplace_list() -> Result<serde_json::Value, String> {
@@ -671,7 +660,6 @@ pub async fn marketplace_list() -> Result<serde_json::Value, String> {
     }
 }
 
-
 /// Available (not yet installed) plugins from marketplace catalogs.
 #[tauri::command]
 pub async fn marketplace_available() -> Result<serde_json::Value, String> {
@@ -686,8 +674,6 @@ pub async fn marketplace_available() -> Result<serde_json::Value, String> {
         })),
     }
 }
-
-
 
 /// Add a marketplace source (git URL, GitHub shorthand, or local path).
 #[tauri::command]
@@ -876,11 +862,17 @@ fn join_logo(root: &std::path::Path, logo: &str) -> Option<std::path::PathBuf> {
     }
 }
 
-fn pick_logo_file(plugin_root: &std::path::Path, manifest_dir: &std::path::Path, manifest: &serde_json::Value) -> Option<std::path::PathBuf> {
+fn pick_logo_file(
+    plugin_root: &std::path::Path,
+    manifest_dir: &std::path::Path,
+    manifest: &serde_json::Value,
+) -> Option<std::path::PathBuf> {
     let iface = manifest.get("interface");
     let candidates: Vec<Option<&str>> = vec![
         iface.and_then(|i| i.get("logo")).and_then(|x| x.as_str()),
-        iface.and_then(|i| i.get("composerIcon")).and_then(|x| x.as_str()),
+        iface
+            .and_then(|i| i.get("composerIcon"))
+            .and_then(|x| x.as_str()),
         manifest.get("logo").and_then(|x| x.as_str()),
         manifest.get("icon").and_then(|x| x.as_str()),
     ];
@@ -911,7 +903,10 @@ fn pick_logo_file(plugin_root: &std::path::Path, manifest_dir: &std::path::Path,
     None
 }
 
-fn parse_manifest_meta(plugin_root: &std::path::Path, manifest_path: &std::path::Path) -> Option<MarketplacePluginMetaDto> {
+fn parse_manifest_meta(
+    plugin_root: &std::path::Path,
+    manifest_path: &std::path::Path,
+) -> Option<MarketplacePluginMetaDto> {
     let raw = std::fs::read_to_string(manifest_path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let name = v
@@ -958,7 +953,9 @@ fn parse_manifest_meta(plugin_root: &std::path::Path, manifest_path: &std::path:
             if let Some(s) = a.as_str() {
                 Some(s.to_string())
             } else {
-                a.get("name").and_then(|n| n.as_str()).map(|s| s.to_string())
+                a.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|s| s.to_string())
             }
         })
         .map(|s| s.trim().to_string())
@@ -973,7 +970,11 @@ fn parse_manifest_meta(plugin_root: &std::path::Path, manifest_path: &std::path:
     let homepage = v
         .get("homepage")
         .and_then(|x| x.as_str())
-        .or_else(|| iface.and_then(|i| i.get("websiteURL")).and_then(|x| x.as_str()))
+        .or_else(|| {
+            iface
+                .and_then(|i| i.get("websiteURL"))
+                .and_then(|x| x.as_str())
+        })
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
     let repository = v
@@ -997,8 +998,8 @@ fn parse_manifest_meta(plugin_root: &std::path::Path, manifest_path: &std::path:
         })
         .unwrap_or_default();
     let manifest_dir = manifest_path.parent().unwrap_or(plugin_root);
-    let logo_path = pick_logo_file(plugin_root, manifest_dir, &v)
-        .map(|p| p.to_string_lossy().to_string());
+    let logo_path =
+        pick_logo_file(plugin_root, manifest_dir, &v).map(|p| p.to_string_lossy().to_string());
     Some(MarketplacePluginMetaDto {
         name,
         display_name,
@@ -1025,7 +1026,10 @@ fn scan_plugin_dir(plugin_root: &std::path::Path) -> Option<MarketplacePluginMet
         plugin_root.join(".codex-plugin").join("plugin.json"),
         plugin_root.join(".claude-plugin").join("plugin.json"),
         plugin_root.join("plugin.json"),
-        plugin_root.join("codex").join(".codex-plugin").join("plugin.json"),
+        plugin_root
+            .join("codex")
+            .join(".codex-plugin")
+            .join("plugin.json"),
     ];
     for m in &manifest_candidates {
         if m.is_file() {
@@ -1046,7 +1050,8 @@ fn scan_plugin_dir(plugin_root: &std::path::Path) -> Option<MarketplacePluginMet
     })
 }
 
-fn collect_marketplace_plugin_meta_index() -> std::collections::HashMap<String, MarketplacePluginMetaDto> {
+fn collect_marketplace_plugin_meta_index(
+) -> std::collections::HashMap<String, MarketplacePluginMetaDto> {
     let mut map = std::collections::HashMap::new();
     for cache_root in marketplace_cache_roots() {
         if !cache_root.is_dir() {
@@ -1104,7 +1109,6 @@ pub async fn marketplace_plugin_meta_index() -> Result<serde_json::Value, String
     let plugins: Vec<MarketplacePluginMetaDto> = result.into_values().collect();
     Ok(serde_json::json!({ "plugins": plugins }))
 }
-
 
 // ── Wallpaper sources (X search + Imagine) ──────────────────────────────────
 
@@ -1198,11 +1202,9 @@ pub async fn process_budget_snapshot(
 pub async fn audit_ledger_list(
     limit: Option<u32>,
 ) -> Result<Vec<crate::audit_ledger::AuditLedgerEntry>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::audit_ledger::list_recent(limit)
-    })
-    .await
-    .map_err(|e| format!("audit_ledger_list: {e}"))
+    tauri::async_runtime::spawn_blocking(move || crate::audit_ledger::list_recent(limit))
+        .await
+        .map_err(|e| format!("audit_ledger_list: {e}"))
 }
 
 /// Clear the on-disk audit ledger (`{app_data}/audit/tool_ledger.jsonl`).
@@ -1217,9 +1219,7 @@ pub async fn audit_ledger_clear() -> Result<serde_json::Value, String> {
 /// Prune audit ledger by retention days (`None` → current AppSettings value).
 /// Soft-fail I/O → error string for UI toast. Returns `{ ok, dropped }`.
 #[tauri::command]
-pub async fn audit_ledger_prune(
-    retention_days: Option<u32>,
-) -> Result<serde_json::Value, String> {
+pub async fn audit_ledger_prune(retention_days: Option<u32>) -> Result<serde_json::Value, String> {
     let dropped = tauri::async_runtime::spawn_blocking(move || {
         crate::audit_ledger::prune_ledger(retention_days)
     })
@@ -1272,11 +1272,16 @@ pub async fn batch_agents_headless(
     project_path: String,
     prompt: String,
     timeout_ms: Option<u64>,
+    session_id: Option<String>,
 ) -> Result<crate::batch_agents::BatchHeadlessResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::batch_agents::run_batch_headless(&project_path, &prompt, timeout_ms)
+        crate::batch_agents::run_batch_headless(
+            &project_path,
+            &prompt,
+            timeout_ms,
+            session_id.as_deref(),
+        )
     })
     .await
     .map_err(|e| format!("batch_agents_headless: {e}"))
 }
-

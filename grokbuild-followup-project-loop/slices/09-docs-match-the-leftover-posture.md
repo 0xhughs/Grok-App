@@ -193,9 +193,9 @@ Every Done when and Tests bullet remapped: three leftover facts in public docs; 
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/slice-06-restrict-headless-9f74` off `origin/main` `fbb03fc8`.
-Worker / role / phase: none / complete / target 01–09
-Dispatch ID / launch state / input identity: none / complete / candidate `78db65f73f1c9f1b869748d461708202057063fdc7a3550992b31792e5b59e65` (code HEAD `a1d3fa5a`)
-Pending result / last consumed dispatch: none / `D-REL-1`
+Worker / role / phase: Reviewer / release / target 01–09
+Dispatch ID / launch state / input identity: `D-REL-1` / launching / candidate `78db65f73f1c9f1b869748d461708202057063fdc7a3550992b31792e5b59e65` (code HEAD `a1d3fa5a`), contract (09 receipt; Now empty)
+Pending result / last consumed dispatch: none / `D09-IMPL-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -212,15 +212,15 @@ Review events:
 - E1 / `D09-PLAN-1` / plan / APPROVE_PLAN / contract `0daea699…064c`, candidate `87743f68…82db` / no gaps / rejection count 0
 - E2 / `D09-IMPL-1` / implementation / APPROVE_IMPLEMENTATION / contract `0daea699…064c`, candidate `78db65f7…9e65` / no gaps / counters frozen: rejections 0, no-progress 0
 Budget limit / consumed / measurement: Not configured; do not invent a budget
-Blocker / resume status / resume action / recheck condition / deadline: none. Target complete. Do not publish.
-Advance phase: complete
-Next slice ID / draft: None — target complete
+Blocker / resume status / resume action / recheck condition / deadline: if interrupted before `D-REL-1` returns, re-dispatch `D-REL-1`. Do not publish.
+Advance phase: archive written; release pending
+Next slice ID / draft: None — target complete (`D-REL-1` launching)
 Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–08.
 
 ## Status
 Shipped (implementation approved `D09-IMPL-1`; code commit `a1d3fa5a`, candidate `78db65f7…9e65`)
 
 ## Next
-None. Run status Complete. Do not publish. Do not deploy. Do not start a new target.
+Coordinator: archive this page to `slices/09-docs-match-the-leftover-posture.md`, add 09 to SLICES Shipped, set Now to `None — target complete`, set run status Finalizing, dispatch independent release review `D-REL-1`.
 
-**Resume action:** none — target complete (`D-REL-1` APPROVE_RELEASE persisted). Do not publish.
+**Resume action:** dispatch `D-REL-1` (release review; no publish). Do not re-ship 01–09. Do not implement Later-outside work. Do not publish.

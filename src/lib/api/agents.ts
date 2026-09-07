@@ -106,12 +106,14 @@ export async function workflowsRun(opts: {
   projectPath?: string | null;
   mode?: "validate" | "launch" | string | null;
   timeoutMs?: number | null;
+  sessionId?: string | null;
 }) {
   return invoke<WorkflowRunResultDto>("workflows_run", {
     name: opts.name,
     projectPath: opts.projectPath ?? null,
     mode: opts.mode ?? "validate",
     timeoutMs: opts.timeoutMs ?? null,
+    sessionId: opts.sessionId ?? null,
   });
 }
 

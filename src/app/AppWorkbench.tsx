@@ -11219,6 +11219,7 @@ export function AppWorkbench() {
               projectPath: proj.path,
               prompt: opts.prompt,
               timeoutMs: BATCH_AGENTS_HEADLESS_TIMEOUT_MS,
+              sessionId: session.sessionId,
             });
             items = upsertBatchResultItem(
               items,
@@ -11387,7 +11388,7 @@ export function AppWorkbench() {
       });
       return summary;
     },
-    [projects, tr],
+    [projects, tr, session.sessionId],
   );
 
   const runPaletteAction = (action: PaletteActionDef) => {

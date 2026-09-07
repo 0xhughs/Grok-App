@@ -158,3 +158,10 @@ describe("deriveStatus Bridge honesty", () => {
     );
   });
 });
+
+describe("default ACL", () => {
+  it("default_acl_allow_from_is_empty", () => {
+    expect(defaultAcl().allowFrom).toBe("");
+    expect(createDefaultInstance("feishu").acl.allowFrom).toBe("");
+  });
+});

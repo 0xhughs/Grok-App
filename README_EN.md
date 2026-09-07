@@ -164,6 +164,15 @@ In restricted network environments where Grok services cannot be reached directl
 - Navigate to **Settings → Runtime → Network** and configure your HTTP/SOCKS proxy (e.g., `http://127.0.0.1:7890`).
 - Click **Test connection** to verify connectivity to endpoints (`auth.x.ai`, `grok.com`, etc.). The proxy is automatically injected into all agent processes.
 
+#### React-vs-host confirms
+In-app GlassModal / `setAppDialog` confirms (mirror write, LAN bind, remote YOLO, and similar) are **renderer UI only**. They are **not** a host IPC confirm and **not** a Tauri command ACL. Dangerous IPC is gated by window label `main` on the host. A compromised `session-*` / `pet` / `theme-editor` renderer does not get a host dialog; it gets a label reject.
+
+#### CLI-install verification
+The first-run wizard can install the Grok Build CLI. There is **no** known-good CLI hash table and **no** published sidecar default. Official mirrors often omit SHA-256 sidecars; a missing sidecar is not cryptographic verification. A first-seen digest **change** is a **hard error**, with the existing allow-unverified UI/env override. The first-seen store is mode `0600`. Setup still classifies that first-seen change as `checksum_missing` (kind collapse) — it does not invent a distinct Setup error kind.
+
+#### CI pin-check
+Workflow `uses:` pins are 40-hex peeled commit ids from `git ls-remote --tags --heads`, with a `# <ref>` comment. `scripts/check_workflow_pins.py` fails closed on fabricated / malformed / tag-object / mismatched / stale pins (`UNKNOWN_SHA`, `TAG_OBJECT`, `REF_MISMATCH`; listing failure is `NETWORK`). `dtolnay/rust-toolchain` is pinned to the **`refs/heads/stable` tip** (no `refs/tags/stable`). If that branch moves, the checker reports `UNKNOWN_SHA` (fail-closed). This is the sanctioned exception, not a claim that CI is always green.
+
 ---
 
 ## 💡 Platform Notes & Troubleshooting

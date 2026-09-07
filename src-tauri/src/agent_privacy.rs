@@ -313,7 +313,8 @@ pub fn save_privacy_config(patch: &PrivacyConfigPatch) -> Result<PrivacyConfigSn
         );
     }
     let next = apply_privacy_patch(&existing, patch);
-    fs::write(&path, &next).map_err(|e| format!("write config: {e}"))?;
+    crate::agent_home_config::write_private_agent_home_file(&path, &next)
+        .map_err(|e| format!("write config: {e}"))?;
 
     tracing::info!(
         path = %path.display(),
@@ -497,6 +498,13 @@ trace_upload = false
         assert!(disk.contains("[harness]"));
         assert!(disk.contains("disable_codebase_upload = true"));
         assert!(!disk.contains("[REDACTED]"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = fs::metadata(agent_config_toml()).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        }
 
         match prev {
             Some(v) => std::env::set_var("GROK_APP_HOME", v),

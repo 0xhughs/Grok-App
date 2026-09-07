@@ -159,7 +159,7 @@
 
 | GUI 标签 | 字段 | 控件 | 默认 | 说明 |
 |----------|------|------|------|------|
-| 允许的用户 | `allow_from` | Text（支持 `*` 或逗号分隔 ID） | `*` + 警告文案 | 对齐 cc-connect；说明发 `/whoami` |
+| 允许的用户 | `allow_from` | Text（逗号分隔的**明确**平台用户 ID） | 空 / 必填；通配条目拒绝 | 对齐 cc-connect；说明发 `/whoami`；catch-all 拒绝 |
 | 允许的群/会话 | `allow_chat` | Text 可选 | 空=不限（或 `*`） | 群 chat_id 列表 |
 | 群聊需要 @ | `require_mention` / 反义 `group_reply_all` | Checkbox | 需要 @ = true | UI：☑ 群聊需要 @机器人 |
 | 仅群聊 | `group_only` | Checkbox | false | 忽略私聊 |
@@ -338,7 +338,7 @@ Doctor 折叠区可提供「复制调试命令」给高级用户。
 |----------|------|------|:----:|------|
 | Client ID (AppKey) | `client_id` | T | ✅ | — |
 | Client Secret | `client_secret` | P | ✅ | — |
-| 允许用户 | `allow_from` | T | | `*` |
+| 允许用户 | `allow_from` | T | | 空 / 必填明确 ID |
 | 群内共享会话 | `share_session_in_channel` | Cb | | false |
 | 入站表情 | `reaction_emoji` | T/无 | | 🤔Thinking |
 | 完成表情 | `done_emoji` | T/无 | | 无 |
@@ -357,7 +357,7 @@ Doctor 折叠区可提供「复制调试命令」给高级用户。
 | App ID | `app_id` | T | ✅ | — |
 | App Secret | `app_secret` | P | ✅ | — |
 | API Base URL | `base_url` | T | | `https://openapi.wps.cn` |
-| 允许用户 | `allow_from` | T | | `*` |
+| 允许用户 | `allow_from` | T | | 空 / 必填明确 ID |
 | 清理思考/工具行 | `clean_reply` | Cb | | false |
 
 ---
@@ -382,7 +382,7 @@ Doctor 折叠区可提供「复制调试命令」给高级用户。
 | GUI 标签 | 字段 | 控件 | 必填 | 默认 |
 |----------|------|------|:----:|------|
 | Bot Token | `token` | P | ✅ | — |
-| 允许用户 | `allow_from` | T | | `*`（未设 warn） |
+| 允许用户 | `allow_from` | T | | 空 / 必填明确 ID |
 | HTTP/SOCKS 代理 | `proxy` | T | | 空 |
 | 代理用户名 | `proxy_username` | T | | 空 |
 | 代理密码 | `proxy_password` | P | | 空 |
@@ -442,7 +442,7 @@ Bridge **启动**与 **测试连接成功** 时自动调用 `setMyCommands`，�
 | GUI 标签 | 字段 | 控件 | 必填 | 默认 |
 |----------|------|------|:----:|------|
 | Bot Token | `token` | P | ✅ | — |
-| 允许用户 | `allow_from` | T | | `*` |
+| 允许用户 | `allow_from` | T | | 空 / 必填明确 ID |
 | 线程隔离会话 | `thread_isolation` | Cb | | false |
 | 进度样式 | `progress_style` | Sel | | compact |
 | 特权 Intent 提示 | — | Callout 只读 | | Message Content Intent 必开 |
@@ -495,7 +495,7 @@ Bridge **启动**与 **测试连接成功** 时自动调用 `setMyCommands`，�
 | Token | `token` | P / 扫码回填 | ✅ | — |
 | Base URL | `base_url` | T 高级 | | ilink 默认 |
 | CDN Base | `cdn_base_url` | T 高级 | | 默认 |
-| 允许用户 | `allow_from` | T | | 建议非 `*` |
+| 允许用户 | `allow_from` | T | | 空 / 必填明确 ID |
 | 账号 ID | `account_id` | T | | default |
 | Route Tag | `route_tag` | T | | 空 |
 | 长轮询超时 ms | `long_poll_timeout_ms` | Num | | 35000 |
@@ -545,7 +545,7 @@ Callout：社区桥、风险自负。
 | Access Token | `access_token` | P | ✅ | — |
 | User ID | `user_id` | T | | 可自动探测 |
 | Device ID | `device_id` | T | | |
-| 允许用户 | `allow_from` | T | | `*` |
+| 允许用户 | `allow_from` | T | | 空 / 必填明确 ID |
 | 自动加入房间 | `auto_join` | Cb | | true |
 | 自动 SAS 验证 | `auto_verify` | Cb | | true |
 | Cross-signing 密码 | `cross_signing_password` | P | | 空 |
@@ -563,7 +563,7 @@ Callout：社区桥、风险自负。
 |----------|------|------|:----:|------|
 | App ID | `app_id` | T | ✅ | — |
 | App Secret | `app_secret` | P | ✅ | — |
-| 允许用户 | `allow_from` | T | | `*` |
+| 允许用户 | `allow_from` | T | | 空 / 必填明确 ID |
 | Token 端点 | `token_endpoint` | T 高级 | | 平台默认 |
 | WS 端点 | `ws_endpoint` | T 高级 | | 平台默认 |
 

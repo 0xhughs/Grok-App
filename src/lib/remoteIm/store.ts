@@ -24,7 +24,7 @@ const LS_BRIDGE = "grok-app.remoteIm.bridge";
 
 export function defaultAcl(): AclConfig {
   return {
-    allowFrom: "*",
+    allowFrom: "",
     allowChat: "",
     requireMention: true,
     groupOnly: false,
