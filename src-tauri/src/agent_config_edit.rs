@@ -601,7 +601,8 @@ pub fn save_agent_config_edit(
         );
     }
     let next = apply_patch_to_toml(&existing, patch)?;
-    fs::write(&path, &next).map_err(|e| format!("write config: {e}"))?;
+    crate::agent_home_config::write_private_agent_home_file(&path, &next)
+        .map_err(|e| format!("write config: {e}"))?;
 
     // Mirror App settings so spawn flags / UI toggles stay aligned.
     // Only the original four keys have AppSettings counterparts.
@@ -899,11 +900,53 @@ two_pass_compaction = true
         );
         assert!(!disk.contains("[REDACTED]"));
 
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = fs::metadata(agent_config_toml()).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        }
+
         match prev {
             Some(v) => std::env::set_var("GROK_APP_HOME", v),
             None => std::env::remove_var("GROK_APP_HOME"),
         }
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn leftover_n6_writers_do_not_use_bare_fs_write() {
+        let sources = [
+            ("agent_config_edit.rs", include_str!("agent_config_edit.rs")),
+            ("agent_privacy.rs", include_str!("agent_privacy.rs")),
+            (
+                "agent_codebase_indexing.rs",
+                include_str!("agent_codebase_indexing.rs"),
+            ),
+            ("permission_rules.rs", include_str!("permission_rules.rs")),
+            (
+                "agent_memory_embed.rs",
+                include_str!("agent_memory_embed.rs"),
+            ),
+            ("mcp_oauth.rs", include_str!("mcp_oauth.rs")),
+        ];
+        for (name, src) in sources {
+            let production = match src.find("#[cfg(test)]") {
+                Some(i) => &src[..i],
+                None => src,
+            };
+            // Build needles without a contiguous bare write-call token in this file.
+            let bare_fs = ["fs", "::", "write", "("].concat();
+            let bare_std = ["std::", "fs", "::", "write", "("].concat();
+            assert!(
+                !production.contains(&bare_fs),
+                "{name} leftover production must not contain a bare fs write"
+            );
+            assert!(
+                !production.contains(&bare_std),
+                "{name} leftover production must not contain a bare std fs write"
+            );
+        }
     }
 
     #[test]
