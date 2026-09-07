@@ -485,6 +485,13 @@ fn param_attachments(params: &Value) -> Option<Vec<store::MessageAttachmentStore
         else {
             continue;
         };
+        if !crate::path_scope::is_allowed(std::path::Path::new(path)) {
+            tracing::warn!(
+                path,
+                "mirror session.send: skip attachment outside path_scope allowlist"
+            );
+            continue;
+        }
         let name = item
             .get("name")
             .and_then(|v| v.as_str())
@@ -799,6 +806,57 @@ mod tests {
         clean_list.retain(|p| p.id != "test-untrusted-id-123");
         let _ = store::save_projects(&clean_list);
     }
+
+    #[test]
+    fn param_attachments_drops_disallowed_paths() {
+        let tmp = std::env::temp_dir().join(format!(
+            "grok-rpc-n11-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        let allowed = tmp.join("allowed.txt");
+        std::fs::write(&allowed, "ok").unwrap();
+        let allowed_path = allowed.to_string_lossy().into_owned();
+        let ssh = tmp.join(".ssh").join("id_rsa");
+        let ssh_path = ssh.to_string_lossy().into_owned();
+        let netrc = tmp.join(".netrc");
+        let netrc_path = netrc.to_string_lossy().into_owned();
+
+        crate::path_scope::with_granted_path(&allowed, || {
+            let mixed = param_attachments(&json!({
+                "attachments": [
+                    { "path": ssh_path, "name": "id_rsa" },
+                    { "path": netrc_path, "name": ".netrc" },
+                    { "path": "/etc/passwd", "name": "passwd" },
+                    { "path": allowed_path, "name": "allowed.txt" },
+                ]
+            }))
+            .expect("mixed list keeps the allowed item");
+            assert_eq!(mixed.len(), 1);
+            assert_eq!(mixed[0].path, allowed_path);
+            assert_eq!(mixed[0].name, "allowed.txt");
+
+            let kept = param_attachments(&json!({
+                "attachments": [{ "path": allowed_path, "name": "allowed.txt" }]
+            }))
+            .expect("granted non-denied temp file is kept");
+            assert_eq!(kept.len(), 1);
+            assert_eq!(kept[0].path, allowed_path);
+
+            let none = param_attachments(&json!({
+                "attachments": [
+                    { "path": ssh_path, "name": "id_rsa" },
+                    { "path": netrc_path, "name": ".netrc" },
+                    { "path": "/etc/passwd", "name": "passwd" },
+                ]
+            }));
+            assert!(none.is_none(), "all-disallowed list must be None");
+        });
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
-
-

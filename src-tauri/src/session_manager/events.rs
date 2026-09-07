@@ -325,22 +325,44 @@ impl SessionManager {
                     let guard = self.inner.lock();
                     guard.as_ref().and_then(|s| {
                         if Self::is_session_load_replay(s) {
-                            s.acp.clone()
+                            Some((s.acp.clone(), s.app_session_id.clone()))
                         } else {
                             None
                         }
                     })
                 };
-                if let Some(acp) = replay_acp {
-                    // CLI wire optionIds are hyphenated (#523 / #542).
-                    let option_id =
-                        coerce_wire_option_id_for_tool("allow_once", None, &options, &tool_name);
-                    tracing::debug!(
-                        "acp permission auto-resolved during load replay tool={tool_name}"
-                    );
-                    let _ = acp
-                        .respond_permission(rpc_id, PermissionOutcome::Selected { option_id })
-                        .await;
+                if let Some((acp, app_sid)) = replay_acp {
+                    if let Some(acp) = acp {
+                        let journaled = Self::journal_has_tool_call_id(&app_sid, &tool_call_id);
+                        match Self::load_replay_permission_action(journaled) {
+                            LoadReplayPermissionAction::Cancel => {
+                                tracing::debug!(
+                                    "acp permission cancelled during load replay tool={tool_name}"
+                                );
+                                let _ = acp
+                                    .respond_permission(rpc_id, PermissionOutcome::Cancelled)
+                                    .await;
+                            }
+                            LoadReplayPermissionAction::AllowOnce => {
+                                // CLI wire optionIds are hyphenated (#523 / #542).
+                                let option_id = coerce_wire_option_id_for_tool(
+                                    "allow_once",
+                                    None,
+                                    &options,
+                                    &tool_name,
+                                );
+                                tracing::debug!(
+                                    "acp permission auto-resolved during load replay tool={tool_name}"
+                                );
+                                let _ = acp
+                                    .respond_permission(
+                                        rpc_id,
+                                        PermissionOutcome::Selected { option_id },
+                                    )
+                                    .await;
+                            }
+                        }
+                    }
                     return;
                 }
 
@@ -1300,5 +1322,100 @@ fn persist_completed_tool_journal(
             tool = %tool_call_id,
             "tool journal append failed: {e}"
         );
+    }
+}
+
+/// Load-replay permission auto-answer: cancel unless a journaled tool row exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LoadReplayPermissionAction {
+    Cancel,
+    AllowOnce,
+}
+
+impl SessionManager {
+    /// True when the App journal has `id == "tool-{tool_call_id}"` and `role == "tool"`.
+    pub(super) fn journal_has_tool_call_id(app_session_id: &str, tool_call_id: &str) -> bool {
+        if app_session_id.is_empty() || tool_call_id.is_empty() {
+            return false;
+        }
+        let mid = format!("tool-{tool_call_id}");
+        store::load_messages(app_session_id)
+            .iter()
+            .any(|m| m.id == mid && m.role == "tool")
+    }
+
+    pub(super) fn load_replay_permission_action(journaled: bool) -> LoadReplayPermissionAction {
+        if journaled {
+            LoadReplayPermissionAction::AllowOnce
+        } else {
+            LoadReplayPermissionAction::Cancel
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::{self, ChatMessageStored};
+    use std::fs;
+
+    struct RestoreHome(Option<String>);
+    impl Drop for RestoreHome {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(v) => std::env::set_var("GROK_APP_HOME", v),
+                None => std::env::remove_var("GROK_APP_HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn load_replay_auto_answer_is_cancelled_unless_journaled() {
+        assert_eq!(
+            SessionManager::load_replay_permission_action(false),
+            LoadReplayPermissionAction::Cancel
+        );
+        assert_eq!(
+            SessionManager::load_replay_permission_action(true),
+            LoadReplayPermissionAction::AllowOnce
+        );
+        assert!(!SessionManager::journal_has_tool_call_id("", "x"));
+        assert!(!SessionManager::journal_has_tool_call_id("sid", ""));
+
+        let _lock = crate::paths::APP_HOME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!(
+            "grok-n9-replay-{}-{}",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::create_dir_all(&tmp);
+        let prev = std::env::var("GROK_APP_HOME").ok();
+        std::env::set_var("GROK_APP_HOME", &tmp);
+        let _restore = RestoreHome(prev);
+        crate::paths::ensure_app_dirs().expect("ensure_app_dirs");
+
+        let sid = "d08-n9-journal";
+        store::append_message(
+            sid,
+            ChatMessageStored {
+                id: "tool-hist-1".into(),
+                role: "tool".into(),
+                content: "tool_step|completed|read|hist".into(),
+                thought: None,
+                created_at: chrono::Utc::now(),
+                is_error: false,
+                attachments: None,
+                marker: Some("tool_step".into()),
+            },
+        )
+        .expect("append journal row");
+
+        assert!(SessionManager::journal_has_tool_call_id(sid, "hist-1"));
+        assert!(!SessionManager::journal_has_tool_call_id(sid, "unknown"));
+
+        drop(_restore);
+        let _ = fs::remove_dir_all(&tmp);
     }
 }
