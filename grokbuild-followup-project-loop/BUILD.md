@@ -98,7 +98,22 @@ Grep:
 - No `pnpm vitest`. Implementation Proof runs `cli_install::tests`. Full `cd src-tauri && cargo test` required; expected `0 failed` (or the same pre-existing parallel flake outside Files as slice 04, with serial `--test-threads=1` green).
 
 ## Proof
-none (Proposed; draft `D05-DRAFT-1` produced this page, no code)
+Builder `D05-BUILD-1` (agent `bc-c87ac3cb-526c-5bb4-9de0-f6657f7cd15f`), implemented in `/workspace` at HEAD `d876a9c1`, committed by coordinator as `6eecaf7a` (code-only). Candidate identity (clean-tree) `4e993693b764fef77241fbeab1c8335db1e82e292707ca104f65567d6758bc85`. Changed paths: exactly `src-tauri/src/cli_install.rs` (+286/−193). Rust `rustc 1.98.1`. Logs under `/tmp/build05/`. Command count 423.
+
+Implementation: table/lookup/`is_known_cli_hash` deleted. First-seen `Changed` does not write; install hard-errors unless `allow_unverified` / `GROK_CLI_ALLOW_UNVERIFIED`. Store writes via `write_hash_store_0600`. Sidecar mismatch still always aborts. `GROK_CLI_REQUIRE_CHECKSUM` stays opt-in. `first_seen_change_error` uses 16-hex prefixes so the string stays under 280 chars.
+
+### Done when → evidence
+- `rg KNOWN_CLI_HASHES|lookup_known_cli_hash|is_known_cli_hash` → 0. Fabricated hex / `fabricated` → 0. `fs::write(store_path` → 0.
+- Helpers present: `write_hash_store_0600` `:130`, `accept_first_seen_hash_in_file` `:212`, `first_seen_install_gate` `:241`, `first_seen_change_error` `:258`.
+- `FirstSeenStatus::Changed` uses: no-write arm `:196`, gate `:246`, flipped test `:1229`/`:1242`, gate test `:1259`. Enum line is `Changed {` `:85` (not this pattern).
+- Named tests present (below). Table test absent.
+
+### Tests → evidence
+- `cli_install::tests`: `ok. 14 passed; 0 failed` (exit 0).
+- Full `cd src-tauri && cargo test`: `ok. 1657 passed; 0 failed; 1 ignored` (exit 0). No PTY flake this run. 1657 = slice-04 1654 − 1 table test + 4 new.
+- Lint: `cargo fmt --all -- --check` exit 1. Dirty set is the baseline **16 minus `cli_install.rs` (15 files)** — required C2 deletions removed the only rustfmt-dirty hunks in that file (table/lookup/old write-on-Changed). New hunks fmt-clean; no rustfmt rewrite of leftover dirt; no new dirty files. Clippy non-fatal exit 0 / 3 warnings; `-D warnings` exit 101 at the three baseline sites.
+
+Caveats: `session_p1.rs` comment about the known-good table is stale (Files=1). Setup still classifies the host error as `checksum_missing` (kind collapse, accepted at plan review).
 
 ## Review
 Plan approval: `D05-PLAN-1` APPROVE_PLAN — reviewer `bc-f5f71d69-183d-5d4f-895f-e0cf212086f2`, contract `05d3fd9c…fdf8`, candidate `308f6af6…9b8c`.
@@ -114,9 +129,9 @@ Observations: `rg FirstSeenStatus::Changed` will not hit the enum variant line (
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Builder / implementation / slice 05
-Dispatch ID / launch state / input identity: `D05-BUILD-1` / launching / candidate `308f6af6…9b8c` (code HEAD `51330f48`), contract `05d3fd9c…fdf8`, plan approval `D05-PLAN-1`
-Pending result / last consumed dispatch: none / `D05-PLAN-1`
+Worker / role / phase: Reviewer / implementation review / slice 05
+Dispatch ID / launch state / input identity: `D05-IMPL-1` / launching / candidate `4e993693…bc85` (code HEAD `6eecaf7a`), baseline `308f6af6…9b8c`, contract `05d3fd9c…fdf8`, plan approval `D05-PLAN-1`
+Pending result / last consumed dispatch: none / `D05-BUILD-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -124,7 +139,7 @@ Snapshot capture and recheck commands / coverage / exclusions:
 - Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/`.
 Baseline snapshot: slice 04 shipped candidate — HEAD `51330f4874b96679d104da58914f84c3b529960b` (code), clean-tree, CANDIDATE `308f6af69624dcd1d62d764a64074687d5ba65f24b00db68ff4847e7ec739b8c`
 Contract identity: `05d3fd9cb4c40d86f060ae401fdfc2353150da203fe6e015b91bd1d1f3f5fdf8`
-Candidate snapshot: HEAD `51330f4874b96679d104da58914f84c3b529960b` (code commit), clean-tree, CANDIDATE `308f6af69624dcd1d62d764a64074687d5ba65f24b00db68ff4847e7ec739b8c`
+Candidate snapshot: HEAD `6eecaf7a3ef33ac37306f2490cdc2216326aec69` (code commit), clean-tree, CANDIDATE `4e993693b764fef77241fbeab1c8335db1e82e292707ca104f65567d6758bc85`
 Rejection count: 0
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none
@@ -138,9 +153,9 @@ Next slice ID / draft: 06 (after 05 ships)
 Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–04.
 
 ## Status
-Building (plan approved `D05-PLAN-1`; pending `D05-BUILD-1`)
+Ready for review (plan approved `D05-PLAN-1`; Builder candidate `6eecaf7a` from `D05-BUILD-1`)
 
 ## Next
-Builder implements the approved contract in `/workspace`. On proof → Ready for review `D05-IMPL-1`. Do not rustfmt-rewrite dirty `cli_install.rs`. Proof lists `FirstSeenStatus::Changed` uses (enum line is `Changed {`, not that token). Keep `first_seen_change_error` under 280 chars so Setup keeps `detail`.
+Independent implementation review `D05-IMPL-1` in isolated worktree. On APPROVE_IMPLEMENTATION → Shipped, archive `slices/05-honest-cli-installer.md`, advance to 06. On REJECT → rejection count 1, Builder repairs. Fmt dirty set 15 (baseline 16 minus `cli_install.rs` after required table deletions) is non-regression, not a drive-by rustfmt.
 
-**Resume action:** consume or launch `D05-BUILD-1` (Builder implementation for slice 05). Do not re-ship 01–04. Do not implement Later-outside work. Do not publish.
+**Resume action:** consume or launch `D05-IMPL-1` (Reviewer implementation review for slice 05). Do not re-ship 01–04. Do not implement Later-outside work. Do not publish.
