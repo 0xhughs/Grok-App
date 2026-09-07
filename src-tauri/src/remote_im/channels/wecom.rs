@@ -207,6 +207,7 @@ fn wecom_timestamp_fresh(timestamp: &str, now_unix: i64) -> bool {
 /// WeCom signature must match **and** the timestamp must be fresh.
 /// The shared-token header is a non-WeCom fallback and is only accepted if
 /// `allow_shared_token` is explicitly enabled.
+#[allow(clippy::too_many_arguments)]
 fn wecom_callback_authorized(
     token: &str,
     timestamp: &str,

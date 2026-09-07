@@ -1352,8 +1352,11 @@ mod tests {
         let home_tmp = temp_app_home("creds0600-home");
         let prev_app = std::env::var("GROK_APP_HOME").ok();
         let prev_home = std::env::var("HOME").ok();
+        let prev_userprofile = std::env::var("USERPROFILE").ok();
         std::env::set_var("GROK_APP_HOME", &tmp);
         std::env::set_var("HOME", &home_tmp);
+        // Windows `user_home()` prefers USERPROFILE over HOME.
+        std::env::set_var("USERPROFILE", &home_tmp);
 
         let _ = crate::paths::ensure_app_dirs();
         let mut s = store::load_settings();
@@ -1399,6 +1402,7 @@ mod tests {
 
         restore_env("GROK_APP_HOME", prev_app);
         restore_env("HOME", prev_home);
+        restore_env("USERPROFILE", prev_userprofile);
         let _ = std::fs::remove_dir_all(&tmp);
         let _ = std::fs::remove_dir_all(&home_tmp);
     }
