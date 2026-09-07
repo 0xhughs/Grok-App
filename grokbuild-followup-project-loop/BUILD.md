@@ -22,7 +22,7 @@ Archive: slices/03-gate-dangerous-ipc.md
 - `eval` (`:685–701`) calls `validate_side_label` (or a one-line `pub(crate) fn check_side_eval_target(label: &str) -> Result<(), String>` that is only `validate_side_label`) **before** script-empty/size checks and **before** `get_side_webview`. `snapshot` (`:704–718`) stays a wrapper around `eval` and inherits the gate.
 - `install_hook` (`src-tauri/src/side_browser_blob.rs:1168–1181`) calls `side_browser_host::validate_side_label` (made `pub(crate)`) before `get_webview`. Empty-label check may stay as a fast path; first-party and non-prefix labels must fail `validate_side_label`.
 - Grep (cwd `/workspace`, counts recorded in Proof):
-  - `rg -n 'validate_label\(' src-tauri/src/side_browser_host.rs` → exactly **one** match: the call inside `validate_side_label`. `eval` and `get_side_webview` no longer call `validate_label` directly.
+  - `rg -n 'validate_label\(' src-tauri/src/side_browser_host.rs` lists exactly **four** matches, and those four are only: (1) the `fn validate_label` definition, (2) the single production call `validate_label(label)?;` inside `validate_side_label`, (3) `assert!(validate_label("resource-browser-tab1").is_ok());` in `label_rules`, (4) `assert!(validate_label("../x").is_err());` in `label_rules`. Proof records the `-n` listing plus enough enclosing context to identify each hit (`fn validate_label` / `validate_side_label` / `label_rules`). `eval` and `get_side_webview` no longer call `validate_label` directly — a leftover in either is a fifth or sixth hit whose context is `eval` / `get_side_webview` and fails this list. Do not use a per-line `rg -v 'mod tests'` (or similar) as the criterion: the two `label_rules` lines sit inside `mod tests` but the lines themselves do not contain `mod tests`.
   - `rg -n 'validate_side_label' src-tauri/src/side_browser_host.rs` matches `validate_side_label` itself plus `create` (`:288`), `close` (`:632`), `get_side_webview`, and `eval` (or `check_side_eval_target`).
   - `rg -n 'validate_side_label' src-tauri/src/side_browser_blob.rs` ≥ 1, inside `install_hook`.
 - Named tests in `side_browser_host.rs` `mod tests` (names normative):
@@ -115,9 +115,9 @@ Blocker 1: Done when / N1 grep ``rg -n 'validate_label\(' src-tauri/src/side_bro
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Builder / revise proposal / slice 03
-Dispatch ID / launch state / input identity: `D03-DRAFT-2` / launching / candidate `2a3620d1…390b`, contract `116fc217…070e` (to be revised), rejection 1, gap = D03-PLAN-1 blocker 1
-Pending result / last consumed dispatch: none / `D03-PLAN-1`
+Worker / role / phase: Reviewer / plan review (revised contract) / slice 03
+Dispatch ID / launch state / input identity: `D03-PLAN-2` / launching / candidate `2a3620d1…390b` (code HEAD `fd142233`), contract pending recompute, draft `D03-DRAFT-2` (blocker 1 grep rewrite only)
+Pending result / last consumed dispatch: none / `D03-DRAFT-2`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -128,7 +128,7 @@ Contract identity: `116fc21710bd21f874c157b8ffb1073d694673a079710c586fb8bcdbeb06
 Candidate snapshot: HEAD `fd142233dd2235cb3832a87b00bdb95d83cb74f2` (code commit), clean-tree, CANDIDATE `2a3620d159da5a3960a7b59e66e8908de27727a3c265ad0a0760235a5bb7390b`
 Rejection count: 1
 Consecutive no-progress repairs: 0
-Open acceptance gaps / prior failing evidence: D03-PLAN-1 blocker 1 (`validate_label(` grep “exactly one” vs `label_rules` still asserting `validate_label(`)
+Open acceptance gaps / prior failing evidence: D03-PLAN-1 blocker 1 addressed in contract by `D03-DRAFT-2` (named four-line `validate_label(` list); pending `D03-PLAN-2`
 Repair awaiting review: false
 Review events:
 - E1 / `D03-PLAN-1` / plan / REJECT_PLAN / contract `116fc217…070e`, candidate `2a3620d1…390b` / gap: blocker 1 / rejection count 0→1
@@ -139,7 +139,7 @@ Next slice ID / draft: 04 (after 03 ships)
 Environment note: `cargo test` is linkable here — webkit2gtk-4.1 2.52.6, gtk+-3.0 3.24.41, libsoup-3.0, javascriptcoregtk-4.1, ayatana-appindicator3, librsvg installed via apt on 2026-09-06; rustc 1.98.1 stable default.
 
 ## Status
-Proposed (`D03-PLAN-1` rejected; Builder revising the unsatisfiable N1 grep)
+Proposed (revised after `D03-PLAN-1`; pending `D03-PLAN-2`)
 
 ## Next
-Builder `D03-DRAFT-2` revises only blocker 1. Then `D03-PLAN-2`.
+Independent plan review `D03-PLAN-2`. On APPROVE_PLAN → Not started, Builder `D03-BUILD-1`. On REJECT_PLAN → Proposed, Builder revises.
