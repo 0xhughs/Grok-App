@@ -940,8 +940,12 @@ mod settings_tests {
             assert!(err_non_exec.contains("not executable"));
         }
 
-        // 5. Executable file passes
-        let exec_file = tmp_dir.join("test_manual_cli_exec.sh");
+        // 5. Executable file passes (`.sh` is not looks_runnable on Windows)
+        let exec_file = if cfg!(windows) {
+            tmp_dir.join("test_manual_cli_exec.cmd")
+        } else {
+            tmp_dir.join("test_manual_cli_exec.sh")
+        };
         let _ = std::fs::write(&exec_file, "#!/bin/sh\nexit 0\n");
         #[cfg(unix)]
         {

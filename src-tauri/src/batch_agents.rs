@@ -415,7 +415,9 @@ mod tests {
 
     #[test]
     fn no_session_refuses() {
-        let r = batch_agents_headless("/tmp", "hello", None, None);
+        // Must be a real directory: missing cwd is `path_missing` (Windows has no /tmp).
+        let cwd = std::env::temp_dir();
+        let r = batch_agents_headless(&cwd.to_string_lossy(), "hello", None, None);
         assert!(!r.ok);
         assert_eq!(r.reason.as_deref(), Some("no_session"));
     }

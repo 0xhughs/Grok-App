@@ -3,7 +3,9 @@ use std::io::Write;
 use zip::write::SimpleFileOptions;
 
 fn tmp() -> (std::sync::MutexGuard<'static, ()>, PathBuf) {
-    let g = crate::paths::APP_HOME_ENV_LOCK.lock().unwrap();
+    let g = crate::paths::APP_HOME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join(format!(
         "grok-skin-pack-{}-{}",
         std::process::id(),

@@ -174,6 +174,22 @@ mod terminal_tests {
 
     #[test]
     fn terminal_pty_spawn_rejects_untrusted_project_path() {
+        let _lock = crate::paths::APP_HOME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!(
+            "grok-term-proj-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        let prev_home = std::env::var("GROK_APP_HOME").ok();
+        std::env::set_var("GROK_APP_HOME", &tmp);
+        let _ = crate::paths::ensure_app_dirs();
+
         // 1. None or empty passes
         assert!(validate_terminal_project_path(None).is_ok());
         assert!(validate_terminal_project_path(Some("")).is_ok());
@@ -187,13 +203,19 @@ mod terminal_tests {
             "project_path must be a registered, trusted project"
         );
 
+        let untrusted_dir = tmp.join("untrusted");
+        let trusted_dir = tmp.join("trusted");
+        let _ = std::fs::create_dir_all(&untrusted_dir);
+        let _ = std::fs::create_dir_all(&trusted_dir);
+        let untrusted_path = untrusted_dir.to_string_lossy().to_string();
+        let trusted_path = trusted_dir.to_string_lossy().to_string();
+
         // 3. Registered untrusted rejected
         let mut list = store::load_projects();
-        let untrusted_path = "/tmp/test-untrusted-terminal-cwd";
         list.push(store::Project {
             id: "test-untrusted-terminal".into(),
             name: "untrusted".into(),
-            path: untrusted_path.into(),
+            path: untrusted_path.clone(),
             trusted: false,
             last_opened_at: chrono::Utc::now(),
             path_ok: true,
@@ -209,15 +231,14 @@ mod terminal_tests {
         });
         let _ = store::save_projects(&list);
 
-        let err = validate_terminal_project_path(Some(untrusted_path)).unwrap_err();
+        let err = validate_terminal_project_path(Some(&untrusted_path)).unwrap_err();
         assert_eq!(err, "project_path must be a registered, trusted project");
 
         // 4. Registered trusted project passes
-        let trusted_path = "/tmp/test-trusted-terminal-cwd";
         list.push(store::Project {
             id: "test-trusted-terminal".into(),
             name: "trusted".into(),
-            path: trusted_path.into(),
+            path: trusted_path.clone(),
             trusted: true,
             last_opened_at: chrono::Utc::now(),
             path_ok: true,
@@ -231,13 +252,14 @@ mod terminal_tests {
             color: None,
             ssh_alias: None,
         });
-        let _ = store::save_projects(&list);
+        store::save_projects(&list).expect("save trusted project");
 
-        assert!(validate_terminal_project_path(Some(trusted_path)).is_ok());
+        assert!(validate_terminal_project_path(Some(&trusted_path)).is_ok());
 
-        // Clean up
-        let mut clean = store::load_projects();
-        clean.retain(|p| p.id != "test-untrusted-terminal" && p.id != "test-trusted-terminal");
-        let _ = store::save_projects(&clean);
+        match prev_home {
+            Some(v) => std::env::set_var("GROK_APP_HOME", v),
+            None => std::env::remove_var("GROK_APP_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

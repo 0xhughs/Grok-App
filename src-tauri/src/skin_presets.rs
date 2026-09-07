@@ -617,7 +617,9 @@ mod tests {
     use super::*;
 
     fn home() -> (std::sync::MutexGuard<'static, ()>, PathBuf) {
-        let g = crate::paths::APP_HOME_ENV_LOCK.lock().unwrap();
+        let g = crate::paths::APP_HOME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!(
             "grok-skin-presets-{}-{}",
             std::process::id(),

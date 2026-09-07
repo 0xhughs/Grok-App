@@ -157,7 +157,9 @@ mod tests {
     use super::*;
 
     fn home_guard() -> (std::sync::MutexGuard<'static, ()>, std::path::PathBuf) {
-        let g = crate::paths::APP_HOME_ENV_LOCK.lock().unwrap();
+        let g = crate::paths::APP_HOME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!(
             "grok-skin-staging-{}-{}",
             std::process::id(),
