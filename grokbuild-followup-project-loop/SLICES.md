@@ -49,16 +49,9 @@ Release review events / last consumed dispatch: none
 - 03 Gate dangerous IPC — D1, N1, N10 — code commit `0aed78ab`, candidate `d72f7320…52a6`, implementation approval `D03-IMPL-1`; archive `slices/03-gate-dangerous-ipc.md`. Residual: session/composer/project policy still callable from `session-*`; React GlassModal is not a host confirm (slice 09 docs).
 - 04 Serve secret names — R7, N3 — code commit `51330f48`, candidate `308f6af6…9b8c`, implementation approval `D04-IMPL-1`; archive `slices/04-serve-secret-names.md`. Residual: official CLI has no `/health`; missing route is Inconclusive (advertise + keep, including non-loopback).
 - 05 Honest CLI installer — C2, N8 — code commit `6eecaf7a`, candidate `4e993693…bc85`, implementation approval `D05-IMPL-1`; archive `slices/05-honest-cli-installer.md`. Residual: Setup still classifies first-seen change as `checksum_missing`; docs/i18n until slice 09.
+- 06 Restrict leftover headless children — P2 leftover, N4, N5 — code commit `0b536c3d`, candidate `f19f791b…f59c`, implementation approval `D06-IMPL-1`; archive `slices/06-restrict-leftover-headless-children.md`. Residual: `official_aux` / `models_aux` / `wallpaper_source` still resolve YOLO from global only; CLI honour of `--no-subagents` / `--disallowed-tools` remains Unverified.
 
 ## Now
-### 06 Restrict leftover headless children
-Goal: `session_title`, `agent_workflows`, `streaming_messages_json` get `--no-subagents --disallowed-tools`, pinned cwd, and `--always-approve` only from the invoking session’s policy. Batch uses that session, not `sessions.first()`.
-Provides: P2 leftover, N4, N5
-Depends on: 01
-Target membership: inside
-Out: Disabling parent-session subagents.
-
-## Later
 ### 07 0600 every agent-home secret write
 Goal: The six bare `fs::write` sites for `config.toml` and MCP OAuth tokens use `write_private_agent_home_file`.
 Provides: S2, N6
@@ -66,6 +59,7 @@ Depends on: 01
 Target membership: inside
 Out: Rewriting the whole agent-home module.
 
+## Later
 ### 08 Path scope and silent replay
 Goal: Deny `agent-home/config.toml`, `~/.netrc`, `~/.kube`, `~/.docker/config.json`, `~/.npmrc`. Mirror attachments go through `path_scope`. Load-replay auto-answer is cancel unless the tool call is journaled.
 Provides: S4 leftover, N11, N9
