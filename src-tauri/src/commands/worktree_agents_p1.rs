@@ -149,6 +149,7 @@ pub async fn workflows_run(
     project_path: Option<String>,
     mode: Option<String>,
     timeout_ms: Option<u64>,
+    session_id: Option<String>,
 ) -> Result<crate::agent_workflows::WorkflowRunResult, String> {
     let project = project_path
         .as_deref()
@@ -167,6 +168,7 @@ pub async fn workflows_run(
             project.as_deref(),
             mode_owned.as_deref(),
             timeout_ms,
+            session_id.as_deref(),
         )
     })
     .await
@@ -215,16 +217,15 @@ pub async fn agents_list(project_path: Option<String>) -> Result<serde_json::Val
         let user_personas = grok.join("personas");
         let bundled_personas = grok.join("bundled").join("personas");
 
-        let project_agents = project.as_ref().map(|p| {
-            std::path::PathBuf::from(p).join(".grok").join("agents")
-        });
-        let project_personas = project.as_ref().map(|p| {
-            std::path::PathBuf::from(p).join(".grok").join("personas")
-        });
+        let project_agents = project
+            .as_ref()
+            .map(|p| std::path::PathBuf::from(p).join(".grok").join("agents"));
+        let project_personas = project
+            .as_ref()
+            .map(|p| std::path::PathBuf::from(p).join(".grok").join("personas"));
 
         let settings = store::load_settings();
-        let active_home =
-            crate::paths::resolve_agent_grok_home(&settings.session_data_mode);
+        let active_home = crate::paths::resolve_agent_grok_home(&settings.session_data_mode);
         let active_user_agents = active_home.join("agents");
 
         let mut agents = Vec::new();
@@ -523,11 +524,10 @@ pub async fn cli_update_check() -> Result<crate::cli_update::CliUpdateCheck, Str
     .map_err(|e| e.to_string())??;
 
     let app_ver = env!("CARGO_PKG_VERSION");
-    let (latest_app, app_update_available) =
-        match crate::app_update::check_app_update().await {
-            Ok(check) => (Some(check.latest_version), Some(check.update_available)),
-            Err(_) => (None, None),
-        };
+    let (latest_app, app_update_available) = match crate::app_update::check_app_update().await {
+        Ok(check) => (Some(check.latest_version), Some(check.update_available)),
+        Err(_) => (None, None),
+    };
     crate::cli_update::enrich_cli_update_check_app_compat(
         &mut dto,
         app_ver,
@@ -720,9 +720,8 @@ fn git_worktree_add_blocking(
 
     // CLI layout nests under ~/.grok/worktrees/<repo>/ — ensure parents exist.
     if let Some(parent) = target_pb.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            format!("could not create worktree parent {}: {e}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("could not create worktree parent {}: {e}", parent.display()))?;
     }
 
     // Safe argv — never go through a shell.
@@ -846,12 +845,7 @@ fn git_worktree_gc_blocking(
         }
     };
 
-    let args = build_worktree_gc_args(
-        &project,
-        dry_run,
-        forced,
-        age.as_deref(),
-    )?;
+    let args = build_worktree_gc_args(&project, dry_run, forced, age.as_deref())?;
 
     let out = crate::process_util::command("git")
         .args(&args)
@@ -968,7 +962,9 @@ fn git_worktree_remove_blocking(
 
     refuse_remove_main_worktree(&listed, &target)?;
 
-    let registered = listed.iter().any(|w| worktree_paths_equal(&w.path, &target));
+    let registered = listed
+        .iter()
+        .any(|w| worktree_paths_equal(&w.path, &target));
     if !registered {
         return Err("worktree not registered for this repository".into());
     }
@@ -982,12 +978,7 @@ fn git_worktree_remove_blocking(
 
     // Safe argv — never go through a shell.
     // `git worktree remove [--force] <path>`
-    let mut args: Vec<String> = vec![
-        "-C".into(),
-        project,
-        "worktree".into(),
-        "remove".into(),
-    ];
+    let mut args: Vec<String> = vec!["-C".into(), project, "worktree".into(), "remove".into()];
     if forced {
         args.push("--force".into());
     }
@@ -1016,4 +1007,3 @@ fn git_worktree_remove_blocking(
         forced,
     })
 }
-

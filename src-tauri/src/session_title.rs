@@ -163,32 +163,50 @@ fn title_prompt(snippet: &str, locale: Locale) -> String {
     }
 }
 
+/// Official_aux list plus title extras (`web_search`, `web_fetch`).
+const TITLE_DISALLOWED_TOOLS: &str = "run_terminal_cmd,run_terminal_command,web_search,web_fetch,search_replace,write,Agent,spawn_subagent,bash,bash_tool";
+
+/// Build headless argv for the title child (without binary path). Pure for tests.
+pub fn title_headless_args(prompt: &str, is_yolo: bool) -> Vec<String> {
+    let mut args = vec![
+        "-p".into(),
+        prompt.to_string(),
+        "--effort".into(),
+        "low".into(),
+        "--max-turns".into(),
+        "2".into(),
+        "--no-subagents".into(),
+        "--disable-web-search".into(),
+        "--disallowed-tools".into(),
+        TITLE_DISALLOWED_TOOLS.into(),
+    ];
+    if is_yolo {
+        args.push("--always-approve".into());
+    }
+    args
+}
+
+/// Title child cwd: process temp dir. Never inherit app cwd or a project path.
+fn title_child_cwd() -> std::path::PathBuf {
+    std::env::temp_dir()
+}
+
 /// Call Grok CLI headless with low effort.
-fn llm_title_via_cli(message: &str) -> Option<String> {
+fn llm_title_via_cli(message: &str, session_id: Option<&str>) -> Option<String> {
     // Same settings path as other CLI call sites (doctor, session spawn, etc.).
     let settings = store::load_settings();
     let probe = cli_probe::probe_cli(settings.manual_cli_path.as_deref());
     let path = probe.path?;
     let snippet: String = message.chars().take(400).collect();
     let prompt = title_prompt(&snippet, tray_i18n::app_locale());
+    let is_yolo = crate::batch_agents::invoking_session_is_yolo(session_id);
 
     // Grok Build counts reasoning + answer as separate turns for some models;
     // `--max-turns 1` exits with "Max turns reached" and never prints a title.
     // Use 2, disable tools/subagents so the reply is plain text only.
     let mut cmd = Command::new(&path);
-    cmd.arg("-p")
-        .arg(&prompt)
-        .arg("--effort")
-        .arg("low")
-        .arg("--max-turns")
-        .arg("2")
-        .arg("--always-approve")
-        .arg("--no-subagents")
-        .arg("--disable-web-search")
-        .arg("--disallowed-tools")
-        .arg(
-            "run_terminal_cmd,run_terminal_command,web_search,web_fetch,search_replace,write,Agent,spawn_subagent,bash,bash_tool",
-        );
+    cmd.args(title_headless_args(&prompt, is_yolo));
+    cmd.current_dir(title_child_cwd());
     crate::process_util::apply_no_window_std(&mut cmd);
     if let Some(path_env) = crate::process_util::enriched_path_env() {
         cmd.env("PATH", path_env);
@@ -242,8 +260,9 @@ pub fn refine_title_in_background(
     crate::process_util::spawn_named_catch("session-title-refine", move || {
         let (tx, rx) = std::sync::mpsc::channel();
         let msg = first_message.clone();
+        let sid = id.clone();
         crate::process_util::spawn_named_catch("session-title-cli", move || {
-            let _ = tx.send(llm_title_via_cli(&msg));
+            let _ = tx.send(llm_title_via_cli(&msg, Some(&sid)));
         });
         // Headless title often needs ~2 model turns (~10–25s); 20s was racing the CLI.
         let refined = rx.recv_timeout(Duration::from_secs(45)).ok().flatten();
@@ -402,6 +421,64 @@ mod tests {
         assert!(zhtw.contains("list open prs"));
         assert!(!zhtw.contains("为下面这条用户消息"));
         assert!(!zhtw.contains("User message:"));
+    }
+
+    #[test]
+    fn title_args_restricted_and_conditional_always_approve() {
+        let ask_args = title_headless_args("test prompt", false);
+        assert!(ask_args.contains(&"--no-subagents".into()));
+        assert!(ask_args.contains(&"--disallowed-tools".into()));
+        assert!(ask_args.contains(&"--disable-web-search".into()));
+        assert!(!ask_args.contains(&"--always-approve".into()));
+        let dt_idx = ask_args
+            .iter()
+            .position(|x| x == "--disallowed-tools")
+            .unwrap();
+        let dt_val = &ask_args[dt_idx + 1];
+        for tok in [
+            "run_terminal_cmd",
+            "run_terminal_command",
+            "search_replace",
+            "write",
+            "Agent",
+            "spawn_subagent",
+            "bash",
+            "bash_tool",
+            "web_search",
+            "web_fetch",
+        ] {
+            assert!(dt_val.contains(tok), "missing {tok}");
+        }
+
+        let yolo_args = title_headless_args("test prompt", true);
+        assert!(yolo_args.contains(&"--no-subagents".into()));
+        assert!(yolo_args.contains(&"--disallowed-tools".into()));
+        assert!(yolo_args.contains(&"--disable-web-search".into()));
+        assert!(yolo_args.contains(&"--always-approve".into()));
+        let yolo_idx = yolo_args
+            .iter()
+            .position(|x| x == "--disallowed-tools")
+            .unwrap();
+        let yolo_dt = &yolo_args[yolo_idx + 1];
+        for tok in [
+            "run_terminal_cmd",
+            "run_terminal_command",
+            "search_replace",
+            "write",
+            "Agent",
+            "spawn_subagent",
+            "bash",
+            "bash_tool",
+        ] {
+            assert!(yolo_dt.contains(tok), "missing {tok}");
+        }
+        assert!(yolo_dt.contains("web_search"));
+        assert!(yolo_dt.contains("web_fetch"));
+    }
+
+    #[test]
+    fn title_child_cwd_is_temp_dir() {
+        assert_eq!(title_child_cwd(), std::env::temp_dir());
     }
 
     #[test]

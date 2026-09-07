@@ -76,7 +76,7 @@ pub fn batch_headless_args(prompt: &str, parent_policy: Option<&str>) -> Vec<Str
         "--output-format".into(),
         "plain".into(),
     ];
-    let is_yolo = parent_policy.map_or(false, |pol| {
+    let is_yolo = parent_policy.is_some_and(|pol| {
         matches!(
             crate::permission::PermissionPolicy::parse(pol),
             crate::permission::PermissionPolicy::AlwaysApprove
@@ -86,6 +86,86 @@ pub fn batch_headless_args(prompt: &str, parent_policy: Option<&str>) -> Vec<Str
         args.push("--always-approve".into());
     }
     args
+}
+
+/// Injected session row for fail-closed invoking-session policy lookup.
+#[derive(Debug, Clone, Copy)]
+pub struct InvokingSessionSlice<'a> {
+    pub id: &'a str,
+    pub project_id: Option<&'a str>,
+    pub permission_policy: Option<&'a str>,
+}
+
+/// Injected project row for fail-closed invoking-session policy lookup.
+#[derive(Debug, Clone, Copy)]
+pub struct InvokingProjectSlice<'a> {
+    pub id: &'a str,
+    pub trusted: bool,
+    pub permission_policy: Option<&'a str>,
+}
+
+/// Fail-closed wrapper over [`crate::permission::effective_permission_policy`].
+///
+/// Find-by-id only — never the index-first session, never `resolve_composer_prefs`.
+/// Missing / blank / unknown `session_id` → Ask (do not fall through to global
+/// YOLO). Untrusted project → Ask (existing helper).
+pub fn invoking_session_effective_policy(
+    session_id: Option<&str>,
+    sessions: &[InvokingSessionSlice<'_>],
+    projects: &[InvokingProjectSlice<'_>],
+    global: &str,
+) -> crate::permission::PermissionPolicy {
+    let Some(id) = session_id.map(str::trim).filter(|s| !s.is_empty()) else {
+        return crate::permission::PermissionPolicy::Ask;
+    };
+    let Some(sess) = sessions.iter().find(|s| s.id == id) else {
+        return crate::permission::PermissionPolicy::Ask;
+    };
+    let proj = sess
+        .project_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(|pid| projects.iter().find(|p| p.id == pid));
+    crate::permission::effective_permission_policy(
+        global,
+        proj.map(|p| p.trusted),
+        proj.and_then(|p| p.permission_policy),
+        sess.permission_policy,
+    )
+}
+
+/// Store-backed lookup for leftover headless children. Unknown id → Ask.
+pub fn load_invoking_session_effective_policy(
+    session_id: Option<&str>,
+) -> crate::permission::PermissionPolicy {
+    let sessions = store::load_sessions_index();
+    let projects = store::load_projects();
+    let global = store::load_settings().permission_policy;
+    let session_slices: Vec<InvokingSessionSlice<'_>> = sessions
+        .iter()
+        .map(|s| InvokingSessionSlice {
+            id: s.id.as_str(),
+            project_id: s.project_id.as_deref(),
+            permission_policy: s.permission_policy.as_deref(),
+        })
+        .collect();
+    let project_slices: Vec<InvokingProjectSlice<'_>> = projects
+        .iter()
+        .map(|p| InvokingProjectSlice {
+            id: p.id.as_str(),
+            trusted: p.trusted,
+            permission_policy: p.permission_policy.as_deref(),
+        })
+        .collect();
+    invoking_session_effective_policy(session_id, &session_slices, &project_slices, &global)
+}
+
+/// True only when a **found** invoking session’s effective policy is YOLO.
+pub fn invoking_session_is_yolo(session_id: Option<&str>) -> bool {
+    matches!(
+        load_invoking_session_effective_policy(session_id),
+        crate::permission::PermissionPolicy::AlwaysApprove
+    )
 }
 
 enum ThreadWait<T> {
@@ -167,20 +247,19 @@ pub fn batch_agents_headless(
 }
 
 /// One-shot headless turn for a project cwd. Soft-fails; never panics.
-/// Resolves parent session policy; if no session exists, refuses.
+///
+/// Resolves the **invoking** session’s effective policy (session + project +
+/// global). Missing / blank / unknown `session_id` fails closed to Ask and
+/// still runs when path/prompt are valid — do not refuse with `no_session`
+/// solely because the id was omitted.
 pub fn run_batch_headless(
     project_path: &str,
     prompt: &str,
     timeout_ms: Option<u64>,
+    session_id: Option<&str>,
 ) -> BatchHeadlessResult {
-    let sessions = store::load_sessions_index();
-    let first = sessions.first();
-    let parent_policy = first.map(|s| {
-        s.permission_policy
-            .as_deref()
-            .unwrap_or("ask")
-    });
-    batch_agents_headless(project_path, prompt, timeout_ms, parent_policy)
+    let policy = load_invoking_session_effective_policy(session_id);
+    batch_agents_headless(project_path, prompt, timeout_ms, Some(policy.as_str()))
 }
 
 fn run_batch_headless_inner(
@@ -340,21 +419,21 @@ mod tests {
 
     #[test]
     fn empty_prompt_soft_fails() {
-        let r = run_batch_headless("/tmp", "  ", None);
+        let r = run_batch_headless("/tmp", "  ", None, None);
         assert!(!r.ok);
         assert_eq!(r.reason.as_deref(), Some("empty_prompt"));
     }
 
     #[test]
     fn empty_path_soft_fails() {
-        let r = run_batch_headless("  ", "hi", None);
+        let r = run_batch_headless("  ", "hi", None, None);
         assert!(!r.ok);
         assert_eq!(r.reason.as_deref(), Some("empty_path"));
     }
 
     #[test]
     fn missing_dir_soft_fails() {
-        let r = run_batch_headless("/no/such/batch/path/xyz", "hi", Some(5_000));
+        let r = run_batch_headless("/no/such/batch/path/xyz", "hi", Some(5_000), None);
         assert!(!r.ok);
         assert_eq!(r.reason.as_deref(), Some("path_missing"));
     }
@@ -373,5 +452,114 @@ mod tests {
         let t = truncate_text(&long, 8);
         assert!(t.ends_with('…'));
         assert!(t.chars().count() <= 8);
+    }
+
+    #[test]
+    fn batch_invoking_session_not_index_first() {
+        use crate::permission::PermissionPolicy;
+
+        let sessions = [
+            InvokingSessionSlice {
+                id: "yolo-first",
+                project_id: None,
+                permission_policy: Some("always_approve"),
+            },
+            InvokingSessionSlice {
+                id: "ask-invoking",
+                project_id: None,
+                permission_policy: Some("ask"),
+            },
+        ];
+        let no_projects: [InvokingProjectSlice<'_>; 0] = [];
+
+        let ask_pol = invoking_session_effective_policy(
+            Some("ask-invoking"),
+            &sessions,
+            &no_projects,
+            "always_approve",
+        );
+        assert_eq!(ask_pol, PermissionPolicy::Ask);
+        let ask_args = batch_headless_args("hello", Some(ask_pol.as_str()));
+        assert!(!ask_args.contains(&"--always-approve".into()));
+
+        let first_pol =
+            invoking_session_effective_policy(Some("yolo-first"), &sessions, &no_projects, "ask");
+        assert_eq!(first_pol, PermissionPolicy::AlwaysApprove);
+
+        let unknown = invoking_session_effective_policy(
+            Some("missing"),
+            &sessions,
+            &no_projects,
+            "always_approve",
+        );
+        assert_eq!(unknown, PermissionPolicy::Ask);
+        assert!(!batch_headless_args("hello", Some(unknown.as_str()))
+            .contains(&"--always-approve".into()));
+
+        let omitted =
+            invoking_session_effective_policy(None, &sessions, &no_projects, "always_approve");
+        assert_eq!(omitted, PermissionPolicy::Ask);
+        let blank = invoking_session_effective_policy(
+            Some("  "),
+            &sessions,
+            &no_projects,
+            "always_approve",
+        );
+        assert_eq!(blank, PermissionPolicy::Ask);
+
+        let yolo_untrusted_sessions = [InvokingSessionSlice {
+            id: "yolo-sess",
+            project_id: Some("untrusted"),
+            permission_policy: Some("always_approve"),
+        }];
+        let untrusted = [InvokingProjectSlice {
+            id: "untrusted",
+            trusted: false,
+            permission_policy: Some("always_approve"),
+        }];
+        let untrusted_pol = invoking_session_effective_policy(
+            Some("yolo-sess"),
+            &yolo_untrusted_sessions,
+            &untrusted,
+            "always_approve",
+        );
+        assert_eq!(untrusted_pol, PermissionPolicy::Ask);
+        assert!(!batch_headless_args("hello", Some(untrusted_pol.as_str()))
+            .contains(&"--always-approve".into()));
+
+        let yolo_trusted_sessions = [InvokingSessionSlice {
+            id: "yolo-sess",
+            project_id: Some("trusted"),
+            permission_policy: Some("always_approve"),
+        }];
+        let trusted = [InvokingProjectSlice {
+            id: "trusted",
+            trusted: true,
+            permission_policy: None,
+        }];
+        let trusted_pol = invoking_session_effective_policy(
+            Some("yolo-sess"),
+            &yolo_trusted_sessions,
+            &trusted,
+            "ask",
+        );
+        assert_eq!(trusted_pol, PermissionPolicy::AlwaysApprove);
+        assert!(batch_headless_args("hello", Some(trusted_pol.as_str()))
+            .contains(&"--always-approve".into()));
+
+        let yolo_orphan = [InvokingSessionSlice {
+            id: "yolo-orphan",
+            project_id: None,
+            permission_policy: Some("always_approve"),
+        }];
+        let orphan_pol = invoking_session_effective_policy(
+            Some("yolo-orphan"),
+            &yolo_orphan,
+            &no_projects,
+            "ask",
+        );
+        assert_eq!(orphan_pol, PermissionPolicy::AlwaysApprove);
+        assert!(batch_headless_args("hello", Some(orphan_pol.as_str()))
+            .contains(&"--always-approve".into()));
     }
 }
