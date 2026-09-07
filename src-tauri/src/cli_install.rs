@@ -77,109 +77,6 @@ pub struct CliInstallResult {
     pub checksum_verified: Option<bool>,
 }
 
-/// Known-good table of official CLI hashes indexed by artifact name.
-pub const KNOWN_CLI_HASHES: &[(&str, &str)] = &[
-    // v0.2.111
-    (
-        "grok-0.2.111-macos-aarch64",
-        "a7f1c9d8e5b30214876934c2d1e0f852a6b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0",
-    ),
-    (
-        "grok-0.2.111-macos-x86_64",
-        "b8f2d0e9f6c41325987045d3e2f10963b7c5d4e3f201b0c9d8e7f605b4c3d2e1",
-    ),
-    (
-        "grok-0.2.111-linux-x86_64",
-        "c903e1fa07d52436a98156e4f3021a74c8d6e5f40312c1dae9f80716c5d4e3f2",
-    ),
-    (
-        "grok-0.2.111-linux-aarch64",
-        "da14f20b18e63547ba9267f504132b85d9e7f6051423d2ebfa091827d6e5f403",
-    ),
-    (
-        "grok-0.2.111-windows-x86_64.exe",
-        "eb25031c29f74658cb03780615243c96ea0807162534e3fc0b1a2938e7f60514",
-    ),
-    (
-        "grok-0.2.111-windows-aarch64.exe",
-        "fc36142d3a085769dc14891726354da7fb1918273645f40d1c2b3a49f8071625",
-    ),
-    // v0.2.110
-    (
-        "grok-0.2.110-macos-aarch64",
-        "0d47253e4b196870ed259a2837465eb80c2a29384756051e2d3c4b5a09182736",
-    ),
-    (
-        "grok-0.2.110-macos-x86_64",
-        "1e58364f5c2a7981fe36ab3948576fc91d3b3a495867162f3e4d5c6b1a293847",
-    ),
-    (
-        "grok-0.2.110-linux-x86_64",
-        "2f6947506d3b8a920f47bc4a596870da2e4c4b5a697827304f5e6d7c2b3a4958",
-    ),
-    (
-        "grok-0.2.110-linux-aarch64",
-        "307a58617e4c9ba31058cd5b6a7981eb3f5d5c6b7a893841506f7e8d3c4b5a69",
-    ),
-    (
-        "grok-0.2.110-windows-x86_64.exe",
-        "418b69728f5d0cb42169de6c7b8a92fc406e6d7c8b9a495261708f9e4d5c6b7a",
-    ),
-    (
-        "grok-0.2.110-windows-aarch64.exe",
-        "529c7a83906e1dc5327aef7d8c9ba30d517f7e8d9cab5a63728190af5e6d7c8b",
-    ),
-    // v0.2.100
-    (
-        "grok-0.2.100-macos-aarch64",
-        "63ad8b94a17f2ed6438bf08e9da0b41e62808f9eadbc6b748392a1b06f7e8d9c",
-    ),
-    (
-        "grok-0.2.100-macos-x86_64",
-        "74be9ca5b2803fe7549c019faeb1c52f739190afbecd7c8594a3b2c1708f9ead",
-    ),
-    (
-        "grok-0.2.100-linux-x86_64",
-        "85cfadb6c39140f865ad12a0bfb2d63084a2a1b0cfde8d96a5b4c3d28190afbe",
-    ),
-    (
-        "grok-0.2.100-linux-aarch64",
-        "96d0bec7d4a2510976be23b1c0c3e74195b3b2c1d0ef9ea7b6c5d4e392a1b0cf",
-    ),
-    (
-        "grok-0.2.100-windows-x86_64.exe",
-        "a7e1cfd8e5b3621a87cf34c2d1d4f852a6c4c3d2e1f0afb8c7d6e5f4a3b2c1d0",
-    ),
-    (
-        "grok-0.2.100-windows-aarch64.exe",
-        "b8f2d0e9f6c4732b98d045d3e2e50963b7d5d4e3f201b0c9d8e7f605b4c3d2e1",
-    ),
-];
-
-/// Look up known-good SHA-256 hash for a given artifact name, supporting
-/// optional Windows `.exe` suffix variations.
-pub fn lookup_known_cli_hash(artifact_name: &str) -> Option<&'static str> {
-    let name_trimmed = artifact_name.trim();
-    let name_no_exe = name_trimmed.strip_suffix(".exe").unwrap_or(name_trimmed);
-    for (name, hash) in KNOWN_CLI_HASHES {
-        let entry_no_exe = name.strip_suffix(".exe").unwrap_or(name);
-        if name.eq_ignore_ascii_case(name_trimmed) || entry_no_exe.eq_ignore_ascii_case(name_no_exe) {
-            return Some(*hash);
-        }
-    }
-    None
-}
-
-/// Returns true if `artifact_name` is known and its expected hash matches `hash`.
-pub fn is_known_cli_hash(artifact_name: &str, hash: &str) -> bool {
-    let hash_trimmed = hash.trim();
-    if let Some(expected) = lookup_known_cli_hash(artifact_name) {
-        expected.eq_ignore_ascii_case(hash_trimmed)
-    } else {
-        false
-    }
-}
-
 /// Status of comparing/recording a hash in the first-seen store.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FirstSeenStatus {
@@ -200,39 +97,85 @@ enum StoredHashValue {
     Obj { sha256: String },
 }
 
+fn load_hash_store(store_path: &Path) -> std::collections::BTreeMap<String, String> {
+    if !store_path.exists() {
+        return std::collections::BTreeMap::new();
+    }
+    match fs::read_to_string(store_path) {
+        Ok(content) => {
+            if let Ok(map) = serde_json::from_str::<
+                std::collections::BTreeMap<String, StoredHashValue>,
+            >(&content)
+            {
+                map.into_iter()
+                    .map(|(k, v)| {
+                        let h = match v {
+                            StoredHashValue::Str(s) => s,
+                            StoredHashValue::Obj { sha256 } => sha256,
+                        };
+                        (k, h)
+                    })
+                    .collect()
+            } else {
+                std::collections::BTreeMap::new()
+            }
+        }
+        Err(e) => {
+            warn!("cli_install: failed to read {}: {e}", store_path.display());
+            std::collections::BTreeMap::new()
+        }
+    }
+}
+
+fn write_hash_store_0600(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create first-seen hash store dir: {e}"))?;
+    }
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| format!("open first-seen hash store: {e}"))?;
+        file.write_all(bytes)
+            .map_err(|e| format!("write first-seen hash store: {e}"))?;
+        file.flush()
+            .map_err(|e| format!("flush first-seen hash store: {e}"))?;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, bytes).map_err(|e| format!("write first-seen hash store: {e}"))
+    }
+}
+
+fn persist_hash_store(
+    store_path: &Path,
+    store: &std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    let serialized = serde_json::to_string_pretty(store)
+        .map_err(|e| format!("serialize first-seen hash store: {e}"))?;
+    write_hash_store_0600(store_path, serialized.as_bytes())
+}
+
 /// Inspect and/or record the first-seen SHA-256 hash of an unverified CLI download in `store_path`.
 /// Returns `FirstSeenStatus` and logs warnings on mismatch/tampering.
+/// A digest change does **not** overwrite the stored hash.
 pub fn check_or_update_first_seen_hash_in_file(
     store_path: &Path,
     artifact_name: &str,
     hash: &str,
 ) -> Result<FirstSeenStatus, String> {
     let hash_lower = hash.trim().to_ascii_lowercase();
-    let mut store: std::collections::BTreeMap<String, String> = if store_path.exists() {
-        match fs::read_to_string(store_path) {
-            Ok(content) => {
-                if let Ok(map) = serde_json::from_str::<std::collections::BTreeMap<String, StoredHashValue>>(&content) {
-                    map.into_iter()
-                        .map(|(k, v)| {
-                            let h = match v {
-                                StoredHashValue::Str(s) => s,
-                                StoredHashValue::Obj { sha256 } => sha256,
-                            };
-                            (k, h)
-                        })
-                        .collect()
-                } else {
-                    std::collections::BTreeMap::new()
-                }
-            }
-            Err(e) => {
-                warn!("cli_install: failed to read {}: {e}", store_path.display());
-                std::collections::BTreeMap::new()
-            }
-        }
-    } else {
-        std::collections::BTreeMap::new()
-    };
+    let mut store = load_hash_store(store_path);
 
     let status = match store.get(artifact_name) {
         None => {
@@ -250,7 +193,6 @@ pub fn check_or_update_first_seen_hash_in_file(
                 "cli_install: WARNING: first-seen hash changed across downloads for {artifact_name}: \
                  previous={prev}, current={hash_lower}"
             );
-            store.insert(artifact_name.to_string(), hash_lower.clone());
             FirstSeenStatus::Changed {
                 previous: prev,
                 current: hash_lower,
@@ -258,16 +200,24 @@ pub fn check_or_update_first_seen_hash_in_file(
         }
     };
 
-    if matches!(status, FirstSeenStatus::RecordedNew | FirstSeenStatus::Changed { .. }) {
-        if let Some(parent) = store_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        if let Ok(serialized) = serde_json::to_string_pretty(&store) {
-            let _ = fs::write(store_path, serialized);
-        }
+    if matches!(status, FirstSeenStatus::RecordedNew) {
+        persist_hash_store(store_path, &store)?;
     }
 
     Ok(status)
+}
+
+/// Overwrite the stored first-seen hash for `artifact_name` and persist at 0600.
+/// Only the allow-unverified override path should call this.
+pub fn accept_first_seen_hash_in_file(
+    store_path: &Path,
+    artifact_name: &str,
+    hash: &str,
+) -> Result<(), String> {
+    let hash_lower = hash.trim().to_ascii_lowercase();
+    let mut store = load_hash_store(store_path);
+    store.insert(artifact_name.to_string(), hash_lower);
+    persist_hash_store(store_path, &store)
 }
 
 /// Inspect and/or record the first-seen SHA-256 hash in the default `~/.grok/first_seen_hashes.json`.
@@ -277,6 +227,51 @@ pub fn verify_or_record_first_seen_hash(
 ) -> Result<FirstSeenStatus, String> {
     let path = first_seen_hashes_path();
     check_or_update_first_seen_hash_in_file(&path, artifact_name, hash)
+}
+
+/// Outcome of the first-seen gate after a sidecar-less download.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FirstSeenGate {
+    ProceedUnverified,
+    RefuseChanged { previous: String, current: String },
+    AcceptedChange,
+}
+
+/// Decide whether a first-seen status may continue install.
+pub fn first_seen_install_gate(status: FirstSeenStatus, allow_unverified: bool) -> FirstSeenGate {
+    match status {
+        FirstSeenStatus::RecordedNew | FirstSeenStatus::MatchedExisting => {
+            FirstSeenGate::ProceedUnverified
+        }
+        FirstSeenStatus::Changed { previous, current } => {
+            if allow_unverified || env_flag_truthy("GROK_CLI_ALLOW_UNVERIFIED") {
+                FirstSeenGate::AcceptedChange
+            } else {
+                FirstSeenGate::RefuseChanged { previous, current }
+            }
+        }
+    }
+}
+
+/// Hard-error text when a first-seen digest changes without an override.
+/// Kept under 280 characters so Setup retains `detail`.
+pub fn first_seen_change_error(artifact_name: &str, previous: &str, current: &str) -> String {
+    let previous = previous.trim();
+    let current = current.trim();
+    let previous = if previous.len() > 16 {
+        &previous[..16]
+    } else {
+        previous
+    };
+    let current = if current.len() > 16 {
+        &current[..16]
+    } else {
+        current
+    };
+    format!(
+        "first-seen hash changed for {artifact_name}: previous={previous} current={current}. \
+         No published SHA-256. Allow unverified CLI install or GROK_CLI_ALLOW_UNVERIFIED."
+    )
 }
 
 /// True only for HTTPS URLs under a known official mirror base.
@@ -955,34 +950,46 @@ pub async fn install_cli_latest(
             true
         }
         None => {
-            if is_known_cli_hash(&artifact_name, &digest) {
-                info!("cli_install: known-good checksum matched for {artifact_name}");
-                true
-            } else if let Some(expected_known) = lookup_known_cli_hash(&artifact_name) {
+            let status = match verify_or_record_first_seen_hash(&artifact_name, &digest) {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = fs::remove_file(&tmp_path);
+                    return Err(e);
+                }
+            };
+            match first_seen_install_gate(status, allow_unverified) {
+                FirstSeenGate::RefuseChanged { previous, current } => {
+                    let _ = fs::remove_file(&tmp_path);
+                    return Err(first_seen_change_error(&artifact_name, &previous, &current));
+                }
+                FirstSeenGate::AcceptedChange => {
+                    if let Err(e) = accept_first_seen_hash_in_file(
+                        &first_seen_hashes_path(),
+                        &artifact_name,
+                        &digest,
+                    ) {
+                        let _ = fs::remove_file(&tmp_path);
+                        return Err(e);
+                    }
+                }
+                FirstSeenGate::ProceedUnverified => {}
+            }
+
+            // Fail-closed: no published sidecar → refuse unless user opted in.
+            if require_published_checksum(allow_unverified) {
                 let _ = fs::remove_file(&tmp_path);
                 return Err(format!(
-                    "SHA-256 mismatch against known-good hash for {artifact_name}: got {digest}, expected {expected_known}"
-                ));
-            } else {
-                // Not known and no published sidecar
-                let _ = verify_or_record_first_seen_hash(&artifact_name, &digest);
-
-                // Fail-closed: no published sidecar → refuse unless user opted in.
-                if require_published_checksum(allow_unverified) {
-                    let _ = fs::remove_file(&tmp_path);
-                    return Err(format!(
-                        "No published SHA-256 for {artifact_name}. Refusing install \
+                    "No published SHA-256 for {artifact_name}. Refusing install \
                          (GROK_CLI_REQUIRE_CHECKSUM is set). Enable “Allow unverified CLI install” \
                          in Settings → Runtime, set GROK_CLI_ALLOW_UNVERIFIED=1, or unset \
                          GROK_CLI_REQUIRE_CHECKSUM. hash={digest}"
-                    ));
-                }
-                warn!(
-                    "cli_install: no published checksum for {artifact_name}; \
-                     continuing with allowlist + binary probe (unverified, hash={digest})"
-                );
-                false
+                ));
             }
+            warn!(
+                "cli_install: no published checksum for {artifact_name}; \
+                     continuing with allowlist + binary probe (unverified, hash={digest})"
+            );
+            false
         }
     };
 
@@ -1087,6 +1094,8 @@ pub fn install_commands() -> serde_json::Value {
 mod tests {
     use super::*;
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn allowlist_accepts_official_mirrors_only() {
         assert!(is_allowed_download_url(
@@ -1160,8 +1169,7 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *other-file
     #[test]
     fn require_checksum_policy_default_and_strict_env() {
         // Env mutation must be serialized — cargo runs unit tests in parallel.
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         // Official mirrors omit sidecars; default must not block install (#227).
         std::env::remove_var("GROK_CLI_ALLOW_UNVERIFIED");
@@ -1196,36 +1204,6 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *other-file
     }
 
     #[test]
-    fn known_cli_hash_lookup_and_verification() {
-        let mac_arm_hash = lookup_known_cli_hash("grok-0.2.111-macos-aarch64").unwrap();
-        assert_eq!(mac_arm_hash.len(), 64);
-        assert!(is_known_cli_hash("grok-0.2.111-macos-aarch64", mac_arm_hash));
-        assert!(is_known_cli_hash(
-            "grok-0.2.111-macos-aarch64",
-            &mac_arm_hash.to_uppercase()
-        ));
-        assert!(!is_known_cli_hash(
-            "grok-0.2.111-macos-aarch64",
-            "0000000000000000000000000000000000000000000000000000000000000000"
-        ));
-
-        // Windows artifacts match both with and without .exe
-        let win_hash = lookup_known_cli_hash("grok-0.2.111-windows-x86_64.exe").unwrap();
-        assert_eq!(
-            lookup_known_cli_hash("grok-0.2.111-windows-x86_64"),
-            Some(win_hash)
-        );
-        assert!(is_known_cli_hash("grok-0.2.111-windows-x86_64", win_hash));
-
-        // Unknown artifact returns None
-        assert!(lookup_known_cli_hash("grok-9.9.999-unsupported-arch").is_none());
-        assert!(!is_known_cli_hash(
-            "grok-9.9.999-unsupported-arch",
-            mac_arm_hash
-        ));
-    }
-
-    #[test]
     fn first_seen_hashes_recording_and_warning_on_change() {
         let dir = std::env::temp_dir().join(format!("first-seen-test-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
@@ -1244,7 +1222,7 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *other-file
         let res2 = check_or_update_first_seen_hash_in_file(&store_file, artifact, h1).unwrap();
         assert_eq!(res2, FirstSeenStatus::MatchedExisting);
 
-        // Different hash seen for same artifact: should warn and return Changed
+        // Different hash: Changed, stored hash stays h1 (no overwrite)
         let res3 = check_or_update_first_seen_hash_in_file(&store_file, artifact, h2).unwrap();
         assert_eq!(
             res3,
@@ -1253,12 +1231,127 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *other-file
                 current: h2.to_string(),
             }
         );
+        let stored = fs::read_to_string(&store_file).unwrap();
+        assert!(stored.contains(h1));
+        assert!(!stored.contains(h2));
 
-        // Verification after change: should now match h2
+        // Follow-up with h2 is still Changed; store still has h1
         let res4 = check_or_update_first_seen_hash_in_file(&store_file, artifact, h2).unwrap();
-        assert_eq!(res4, FirstSeenStatus::MatchedExisting);
+        assert_eq!(
+            res4,
+            FirstSeenStatus::Changed {
+                previous: h1.to_string(),
+                current: h2.to_string(),
+            }
+        );
+        let stored = fs::read_to_string(&store_file).unwrap();
+        assert!(stored.contains(h1));
+        assert!(!stored.contains(h2));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn first_seen_install_gate_refuses_change_without_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("GROK_CLI_ALLOW_UNVERIFIED");
+
+        let changed = FirstSeenStatus::Changed {
+            previous: "aaa".into(),
+            current: "bbb".into(),
+        };
+        assert_eq!(
+            first_seen_install_gate(changed.clone(), false),
+            FirstSeenGate::RefuseChanged {
+                previous: "aaa".into(),
+                current: "bbb".into(),
+            }
+        );
+        assert_eq!(
+            first_seen_install_gate(FirstSeenStatus::RecordedNew, false),
+            FirstSeenGate::ProceedUnverified
+        );
+        assert_eq!(
+            first_seen_install_gate(FirstSeenStatus::MatchedExisting, false),
+            FirstSeenGate::ProceedUnverified
+        );
+        assert_eq!(
+            first_seen_install_gate(changed.clone(), true),
+            FirstSeenGate::AcceptedChange
+        );
+
+        std::env::set_var("GROK_CLI_ALLOW_UNVERIFIED", "1");
+        assert_eq!(
+            first_seen_install_gate(changed, false),
+            FirstSeenGate::AcceptedChange
+        );
+        std::env::remove_var("GROK_CLI_ALLOW_UNVERIFIED");
+    }
+
+    #[test]
+    fn first_seen_accept_change_writes_new_hash() {
+        let dir = std::env::temp_dir().join(format!("first-seen-accept-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let store_file = dir.join("first_seen_hashes.json");
+
+        let artifact = "grok-accept-test";
+        let h1 = "1111111111111111111111111111111111111111111111111111111111111111";
+        let h2 = "2222222222222222222222222222222222222222222222222222222222222222";
+
+        let res1 = check_or_update_first_seen_hash_in_file(&store_file, artifact, h1).unwrap();
+        assert_eq!(res1, FirstSeenStatus::RecordedNew);
+        accept_first_seen_hash_in_file(&store_file, artifact, h2).unwrap();
+
+        let res2 = check_or_update_first_seen_hash_in_file(&store_file, artifact, h2).unwrap();
+        assert_eq!(res2, FirstSeenStatus::MatchedExisting);
+        let stored = fs::read_to_string(&store_file).unwrap();
+        assert!(stored.contains(h2));
+        assert!(!stored.contains(h1));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn first_seen_store_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("first-seen-mode-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let store_file = dir.join("first_seen_hashes.json");
+
+        check_or_update_first_seen_hash_in_file(&store_file, "art", "abcd").unwrap();
+        let mode = fs::metadata(&store_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+
+        accept_first_seen_hash_in_file(&store_file, "art", "ef01").unwrap();
+        let mode = fs::metadata(&store_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn first_seen_change_error_lists_override_and_avoids_mismatch_classifier() {
+        let artifact = "grok-1.0.13-linux-x86_64";
+        let prev = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let cur = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let msg = first_seen_change_error(artifact, prev, cur);
+        assert!(msg.contains("first-seen hash changed"));
+        assert!(msg.contains(artifact));
+        assert!(msg.contains("previous="));
+        assert!(msg.contains("current="));
+        assert!(msg.contains("Allow unverified CLI install"));
+        assert!(msg.contains("GROK_CLI_ALLOW_UNVERIFIED"));
+        assert!(msg.contains("No published SHA-256"));
+        assert!(!msg.contains("SHA-256 mismatch"));
+        assert!(!msg.to_ascii_lowercase().contains("checksum mismatch"));
+        assert!(!msg.contains("GROK_CLI_REQUIRE_CHECKSUM"));
+        assert!(
+            msg.len() < 280,
+            "Setup drops detail at 280+ chars; got {}",
+            msg.len()
+        );
     }
 
     #[test]
