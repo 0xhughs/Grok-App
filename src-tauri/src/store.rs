@@ -1301,7 +1301,10 @@ pub fn load_projects() -> Vec<Project> {
 }
 
 /// Find a registered, trusted project matching `path`.
-pub fn find_trusted_project_by_path<'a>(projects: &'a [Project], path: &str) -> Option<&'a Project> {
+pub fn find_trusted_project_by_path<'a>(
+    projects: &'a [Project],
+    path: &str,
+) -> Option<&'a Project> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return None;
@@ -2939,8 +2942,7 @@ fn is_github_token(s: &str) -> bool {
         || s.starts_with("ghs_")
         || s.starts_with("ghr_"))
         && s.len() >= 20
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn is_standard_api_key(s: &str) -> bool {
@@ -2959,8 +2961,9 @@ fn is_high_entropy_token(s: &str) -> bool {
         }
     }
     if s.len() >= 40
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=' || c == '_' || c == '-')
+        && s.chars().all(|c| {
+            c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=' || c == '_' || c == '-'
+        })
     {
         let has_lower = s.chars().any(|c| c.is_ascii_lowercase());
         let has_upper = s.chars().any(|c| c.is_ascii_uppercase());
@@ -2985,8 +2988,24 @@ fn is_token_delimiter(c: char) -> bool {
     c.is_whitespace()
         || matches!(
             c,
-            '"' | '\'' | '`' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | '='
-                | '\\' | '|' | '^' | '?' | '&'
+            '"' | '\''
+                | '`'
+                | '<'
+                | '>'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | ','
+                | ';'
+                | '='
+                | '\\'
+                | '|'
+                | '^'
+                | '?'
+                | '&'
         )
 }
 

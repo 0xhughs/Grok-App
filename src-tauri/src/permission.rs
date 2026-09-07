@@ -623,7 +623,10 @@ pub fn may_auto_allow_download(
     command: &str,
 ) -> bool {
     // P1: download auto-allow removed from Ask entirely
-    if matches!(policy, PermissionPolicy::Deny | PermissionPolicy::DontAsk | PermissionPolicy::Ask) {
+    if matches!(
+        policy,
+        PermissionPolicy::Deny | PermissionPolicy::DontAsk | PermissionPolicy::Ask
+    ) {
         return false;
     }
     // P1: chained commands must never be auto-allowed
@@ -1087,9 +1090,15 @@ mod tests {
     fn scope_key_shell_uses_argv_not_executable_name_only() {
         // P3: scope_key("shell", "npm install foo") is not "shell:npm"
         assert_ne!(scope_key("shell", "npm install foo"), "shell:npm");
-        assert_eq!(scope_key("shell", "npm install foo"), "shell:npm install foo");
+        assert_eq!(
+            scope_key("shell", "npm install foo"),
+            "shell:npm install foo"
+        );
         assert_eq!(scope_key("shell", "cargo test"), "shell:cargo test");
-        assert_ne!(scope_key("shell", "git status"), scope_key("shell", "git push"));
+        assert_ne!(
+            scope_key("shell", "git status"),
+            scope_key("shell", "git push")
+        );
     }
 
     #[test]
@@ -1311,14 +1320,8 @@ mod tests {
             "curl -sL -o {} \"https://example.com/a.png\"",
             dest.display()
         );
-        let wget_cmd = format!(
-            "wget -O {} \"https://example.com/a.png\"",
-            dest.display()
-        );
-        let aria_cmd = format!(
-            "aria2c -o {} \"https://example.com/a.png\"",
-            dest.display()
-        );
+        let wget_cmd = format!("wget -O {} \"https://example.com/a.png\"", dest.display());
+        let aria_cmd = format!("aria2c -o {} \"https://example.com/a.png\"", dest.display());
 
         for cmd in [&curl_cmd, &wget_cmd, &aria_cmd] {
             assert!(is_download_command(cmd));
