@@ -3,5 +3,5 @@
 Status: active
 
 Current slice: 07 0600 every agent-home secret write
-Temporary note: Slice 06 shipped (`D06-IMPL-1`, code `0b536c3d`, candidate `f19f791b…f59c`). Archive written.
-Do next: `D07-DRAFT-1` (proposal only). After approve plan: implement 07.
+Temporary note: D07-DRAFT-1 persisted as Proposed. Extra non-N6 config.toml writers recorded as residual.
+Do next: `D07-PLAN-1`. After APPROVE_PLAN: implement 07.
