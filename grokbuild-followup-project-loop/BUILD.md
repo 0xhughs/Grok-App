@@ -135,7 +135,27 @@ Grep (cwd `/workspace`, Proof lists `-n`):
 - Full `cd src-tauri && cargo test` required at implementation; expected `0 failed` (or the same pre-existing parallel flake `terminal_pty_spawn_rejects_untrusted_project_path` outside Files, with serial `--test-threads=1` green). Do not claim it passed in this contract.
 
 ## Proof
-none
+Builder `D08-BUILD-1` (agent `bc-6ebcdb83-d1d9-51ed-93d8-52d4c5d79d83`), implemented in `/workspace` at HEAD `c1afe7a6`, committed by coordinator as `62f55936` (code-only). Candidate identity (clean-tree) `87743f6806d8c38e72aa364cf761b5d5a0a0fd6ee7532ea8cc89dc1f515a82db`. Changed paths: exactly the three Files (+279/−16). Rust `rustc 1.98.1`. Command count 423.
+
+Implementation: leftover deny paths in `is_denied_target`; `param_attachments` requires `path_scope::is_allowed`; load-replay permission is `Cancelled` unless journaled `tool-{id}`. `remote-im` check uses `contains`. Ask stays default.
+
+### Done when → evidence
+- `is_denied_target` body contains `.netrc`, `.kube`, `.docker`, `.npmrc`, `config.toml` / `agent-home`
+- `path_scope::is_allowed` in `rpc.rs` `:488` inside `param_attachments`
+- `PermissionOutcome::Cancelled` in replay arm; `load_replay_permission_action` + `journal_has_tool_call_id` used
+- `is_session_load_replay_flags` unchanged
+- `#[tauri::command]` count **423**
+
+### Tests → evidence
+- `path_scope::tests` including `denies_s4_leftover_targets_even_under_allowed_roots`
+- `mirror::rpc::tests` including `param_attachments_drops_disallowed_paths`
+- `load_replay_auto_answer_is_cancelled_unless_journaled`
+- routing gate test still passes
+- Full `cd src-tauri && cargo test`: `1670 passed; 0 failed; 1 ignored`
+- fmt dirty set still the 15-file post-06 list; `events.rs` rustfmt-check exit 0
+- Clippy `-D warnings` exactly `wecom.rs:210`
+
+Caveats: desktop attachments residual; coordinator did not re-run the full suite (Reviewer rematches).
 
 ## Review
 Plan approval: `D08-PLAN-1` APPROVE_PLAN — reviewer `bc-c5faeb80-ad97-5c17-9c77-a332e9e34c0b`, contract `9083988b…0dfe`, candidate `66debe65…4338`.
@@ -150,9 +170,9 @@ Judgments: (a) BUILD matches SLICES Now 08 (S4 leftover, N11, N9); (b) P4 / Ask 
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/slice-06-restrict-headless-9f74` off `origin/main` `fbb03fc8`.
-Worker / role / phase: Builder / implementation / slice 08
-Dispatch ID / launch state / input identity: `D08-BUILD-1` / launching / candidate `66debe655623292c3aac8fcada12de18a787b5a14a62abe80c4fa79f30024338` (code HEAD `e5600725`), contract `9083988b9b74d5d955ac1db775093d01ca8968afd1b917b4ac6f7e21805e0dfe`
-Pending result / last consumed dispatch: none / `D08-PLAN-1`
+Worker / role / phase: Reviewer / implementation / slice 08
+Dispatch ID / launch state / input identity: `D08-IMPL-1` / launching / candidate `87743f6806d8c38e72aa364cf761b5d5a0a0fd6ee7532ea8cc89dc1f515a82db` (code HEAD `62f55936`), contract `9083988b9b74d5d955ac1db775093d01ca8968afd1b917b4ac6f7e21805e0dfe`
+Pending result / last consumed dispatch: none / `D08-BUILD-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -160,7 +180,7 @@ Snapshot capture and recheck commands / coverage / exclusions:
 - Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/`.
 Baseline snapshot: slice 07 shipped candidate — HEAD `e5600725` (code), clean-tree, CANDIDATE `66debe655623292c3aac8fcada12de18a787b5a14a62abe80c4fa79f30024338`
 Contract identity: `9083988b9b74d5d955ac1db775093d01ca8968afd1b917b4ac6f7e21805e0dfe`
-Candidate snapshot: HEAD `e5600725` (code commit), clean-tree, CANDIDATE `66debe655623292c3aac8fcada12de18a787b5a14a62abe80c4fa79f30024338`
+Candidate snapshot: HEAD `62f55936` (code commit), clean-tree, CANDIDATE `87743f6806d8c38e72aa364cf761b5d5a0a0fd6ee7532ea8cc89dc1f515a82db`
 Rejection count: 0
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none
@@ -168,15 +188,15 @@ Repair awaiting review: false
 Review events:
 - E1 / `D08-PLAN-1` / plan / APPROVE_PLAN / contract `9083988b…0dfe`, candidate `66debe65…4338` / no gaps / rejection count 0
 Budget limit / consumed / measurement: Not configured; do not invent a budget
-Blocker / resume status / resume action / recheck condition / deadline: if interrupted before `D08-BUILD-1` returns, re-dispatch `D08-BUILD-1`. Do not publish.
-Advance phase: plan approved; implementation launching
-Next slice ID / draft: 08 (`D08-BUILD-1` launching)
+Blocker / resume status / resume action / recheck condition / deadline: if interrupted before `D08-IMPL-1` returns, re-dispatch `D08-IMPL-1`. Do not publish.
+Advance phase: implementation candidate committed; review launching
+Next slice ID / draft: 08 (`D08-IMPL-1` launching)
 Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–07.
 
 ## Status
-Building
+Ready for review (code commit `62f55936`, candidate `87743f68…82db`)
 
 ## Next
-Builder `D08-BUILD-1` implements the accepted 08 contract. After proof: Ready for review / `D08-IMPL-1`.
+Independent Reviewer `D08-IMPL-1`. After APPROVE_IMPLEMENTATION: archive 08 and draft 09. After REJECT: Builder repairs.
 
-**Resume action:** launch `D08-BUILD-1` (implement slice 08 only). Do not re-ship 01–07. Do not implement Later-outside work. Do not publish.
+**Resume action:** launch `D08-IMPL-1` (isolated worktree, no write). Do not re-ship 01–07. Do not implement Later-outside work. Do not publish.
