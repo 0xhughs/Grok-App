@@ -54,6 +54,7 @@ pub async fn start_runtime(
     let list = config::list_instances();
     let mut active = Vec::new();
     let mut instances = Vec::new();
+    let mut acl_blocked = false;
 
     for dto in list {
         if !dto.enabled || !dto.has_credentials {
@@ -68,11 +69,10 @@ pub async fn start_runtime(
         // time (`err.allowFromRequired`). Covers hand-edited configs and
         // instances saved before that UI rule existed.
         if outbound::allow_from_blocks_enable(&dto.acl) {
-            let err = "allow_from is empty: add your user id (or * for any) in \
-                       Settings → Remote IM before enabling this channel"
-                .to_string();
+            let err = outbound::ALLOW_FROM_BLOCKED_ERR.to_string();
             tracing::error!(instance = %dto.id, "{err}");
             let _ = config::set_instance_last_error(&dto.id, Some(err));
+            acl_blocked = true;
             continue;
         }
         let inst = ChannelInstance {
@@ -94,6 +94,11 @@ pub async fn start_runtime(
     }
 
     if instances.is_empty() {
+        // Name the real cause when the ACL guard alone emptied the start list,
+        // so the bridge `lastError` shown in the UI is honest.
+        if acl_blocked {
+            return Err(outbound::ALLOW_FROM_BLOCKED_ERR.into());
+        }
         return Err("no enabled channel with credentials".into());
     }
 

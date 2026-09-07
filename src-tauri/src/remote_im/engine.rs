@@ -2179,7 +2179,7 @@ mod tests {
             enabled: true,
             secrets,
             options: json!({}),
-            acl: json!({ "allowFrom": "*" }),
+            acl: json!({ "allowFrom": "peer@im.wechat" }),
             project_scope: json!("all_trusted"),
         });
         let msg = IncomingMessage {

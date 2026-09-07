@@ -239,6 +239,39 @@ def ci_has(needle: str) -> bool:
     return needle in read(ci)
 
 
+def workflow_pin_format_hits() -> tuple[int, list[str]]:
+    """Offline format gate: every `uses:` is `owner/repo@<40-hex> # <ref-label>`.
+
+    Reuses the parser from scripts/check_workflow_pins.py; live ref resolution
+    stays in the dedicated CI step so this gate never touches the network.
+    Returns (pins_seen, malformed_lines).
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "check_workflow_pins", ROOT / "scripts/check_workflow_pins.py"
+    )
+    if spec is None or spec.loader is None:
+        return 0, ["scripts/check_workflow_pins.py not importable"]
+    mod = sys.modules.get(spec.name)
+    if mod is None:
+        mod = importlib.util.module_from_spec(spec)
+        # dataclasses resolve annotations via sys.modules[__module__]; register first.
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+    seen = 0
+    bad: list[str] = []
+    for wf in mod.DEFAULT_FILES:
+        if not wf.exists():
+            bad.append(f"missing {wf.relative_to(ROOT)}")
+            continue
+        for pin in mod.parse_workflow_pins(wf, str(wf.relative_to(ROOT))):
+            seen += 1
+            if pin.repo is None:
+                bad.append(f"{pin.file}:{pin.line}: {pin.raw[:80]}")
+    return seen, bad
+
+
 def has_eslint_config() -> bool:
     candidates = [
         ROOT / "eslint.config.js",
@@ -401,6 +434,17 @@ def build_gates() -> list[Gate]:
             "CI runs cargo clippy",
             "wave-a",
             lambda: (ci_has("clippy"), "ci.yml must invoke clippy"),
+        ),
+        Gate(
+            "WORKFLOW_PINS_FORMAT",
+            "Every workflow `uses:` is owner/repo@<40-hex> # <ref-label> (offline; live check in CI step)",
+            "wave-a",
+            lambda: (
+                (lambda seen, bad: seen > 0 and not bad)(*workflow_pin_format_hits()),
+                (lambda seen, bad: f"pins={seen}" + (f" malformed={bad[:3]}" if bad else ""))(
+                    *workflow_pin_format_hits()
+                ),
+            ),
         ),
         Gate(
             "CI_FMT",

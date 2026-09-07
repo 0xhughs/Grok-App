@@ -15,9 +15,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Verify GitHub Actions pins (real upstream SHAs)
+        # Offline fixture tests first, then live `git ls-remote` against every
+        # action repo. Fails closed: fabricated / tag-object / mismatched pins
+        # exit 1, listing failures exit 2.
+        run: |
+          python3 -m unittest scripts/check_workflow_pins_test.py
+          python3 scripts/check_workflow_pins.py
       # package.json packageManager is the single source (no hardcode version).
       - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
-      - uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832e0b4 # v4.0.3
+      - uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4.0.3
         with:
           node-version: 22
           cache: pnpm
@@ -53,7 +60,7 @@ jobs:
     name: Rust ${{ matrix.name }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@4dd2f0b9f5e4277b5a8eb2a6fb368c22119fa9d1 # stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable (refs/heads/stable)
       - name: Install Linux WebKit deps
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -65,7 +72,7 @@ jobs:
             patchelf \
             libgtk-3-dev \
             libayatana-appindicator3-dev
-      - uses: swatinem/rust-cache@f0deed1e0edfc6a9be954172b8c0ab617c49165c # v2.7.7
+      - uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
         with:
           workspaces: "./src-tauri -> target"
           shared-key: ci-${{ matrix.name }}-v5

@@ -18,7 +18,7 @@ The owner running this pack in Google Antigravity against a local clone of https
 Slices 01–09 inclusive. Stop when Now is `None — target complete` and release gates pass. Do not implement Later-outside work. Do not publish or deploy.
 
 ## Run status
-Prepared
+Running
 
 ## Open decisions
 None remaining. Locked from the audit:
@@ -44,45 +44,13 @@ Pending release result: none
 Release review events / last consumed dispatch: none
 
 ## Shipped
-- (none)
+- 01 Restore real CI pins — C1, N7 — code commit `73193a0e`, candidate `8c79e574…341e`, implementation approval `D01-IMPL-1`; archive `slices/01-restore-real-ci-pins.md`. Note: `dtolnay/rust-toolchain` pinned to `refs/heads/stable` tip (no tag exists) — sanctioned exception; checker reports UNKNOWN_SHA when the branch moves (fail-closed).
+- 02 Deny wildcard IM senders on the live bridge — R4, N2 — code commit `fd142233`, candidate `2a3620d1…390b`, implementation approval `D02-IMPL-1`; archive `slices/02-deny-wildcard-im-senders.md`. Residual: UI/`docs` still offer `*` until slice 09; stored `"*"` ACLs fail closed on enable.
+- 03 Gate dangerous IPC — D1, N1, N10 — code commit `0aed78ab`, candidate `d72f7320…52a6`, implementation approval `D03-IMPL-1`; archive `slices/03-gate-dangerous-ipc.md`. Residual: session/composer/project policy still callable from `session-*`; React GlassModal is not a host confirm (slice 09 docs).
+- 04 Serve secret names — R7, N3 — code commit `51330f48`, candidate `308f6af6…9b8c`, implementation approval `D04-IMPL-1`; archive `slices/04-serve-secret-names.md`. Residual: official CLI has no `/health`; missing route is Inconclusive (advertise + keep, including non-loopback).
+- 05 Honest CLI installer — C2, N8 — code commit `6eecaf7a`, candidate `4e993693…bc85`, implementation approval `D05-IMPL-1`; archive `slices/05-honest-cli-installer.md`. Residual: Setup still classifies first-seen change as `checksum_missing`; docs/i18n until slice 09.
 
 ## Now
-### 01 Restore real CI pins
-Goal: Every GitHub Action `uses:` pin is a real upstream 40-char SHA. A checker fails fabricated pins.
-Provides: C1, N7
-Depends on: none
-Target membership: inside
-Out: Making CI green end-to-end if gtk/webkit cannot link in this environment; rewriting application features.
-
-## Later
-### 02 Deny wildcard IM senders on the live bridge
-Goal: Rust `remote_im` treats `*` and empty as deny. Error text does not recommend `*`.
-Provides: R4, N2
-Depends on: 01
-Target membership: inside
-Out: Deleting the legacy Node `remote-bridge/` package.
-
-### 03 Gate dangerous IPC
-Goal: `side_browser_eval` cannot target `main`/`session-*`/`pet`/`theme-editor`. YOLO, CLI path, mirror publish, plugin `--trust`, and serve start require host-side confirm or main-only command permissions.
-Provides: D1, N1, N10
-Depends on: 01
-Target membership: inside
-Out: Redesigning the 423-command surface in one slice.
-
-### 04 Serve secret names
-Goal: Child serve gets `GROK_AGENT_SECRET` and `GROK_SERVE_SECRET`. `--secret` stays off argv. Non-loopback advertise only after an unauthenticated probe fails.
-Provides: R7, N3
-Depends on: 01
-Target membership: inside
-Out: Changing official CLI source.
-
-### 05 Honest CLI installer
-Goal: `KNOWN_CLI_HASHES` is generated from real downloads or removed. First-seen hash change is a hard error with UI override. Hash store is 0600.
-Provides: C2, N8
-Depends on: 01
-Target membership: inside
-Out: Hosting a new artifact bucket.
-
 ### 06 Restrict leftover headless children
 Goal: `session_title`, `agent_workflows`, `streaming_messages_json` get `--no-subagents --disallowed-tools`, pinned cwd, and `--always-approve` only from the invoking session’s policy. Batch uses that session, not `sessions.first()`.
 Provides: P2 leftover, N4, N5
@@ -90,6 +58,7 @@ Depends on: 01
 Target membership: inside
 Out: Disabling parent-session subagents.
 
+## Later
 ### 07 0600 every agent-home secret write
 Goal: The six bare `fs::write` sites for `config.toml` and MCP OAuth tokens use `write_private_agent_home_file`.
 Provides: S2, N6
@@ -105,8 +74,8 @@ Target membership: inside
 Out: Verifying live Grok Build `@path` semantics.
 
 ### 09 Docs match the leftover posture
-Goal: remote-security.md, README_EN.md, SECURITY.md state React-vs-host confirm, CLI-install verification, and CI pin-check reality.
+Goal: remote-security.md, README_EN.md, SECURITY.md state React-vs-host confirm, CLI-install verification, and CI pin-check reality. Remote IM user-facing copy and `docs/llm-wiki/remote-im.md` stop offering `*` for allow-from (i18n keys in `settings-remoteIm.ts` across all 15 locales, `en` authority) and the Remote IM panel save-time check refuses `*`-containing values, matching the slice 02 bridge default. (Amended by coordinator after `D02-DRAFT-1`: within authority under AGENTS "Docs must match code defaults after each slice that changes a default" and the locked R4 decision "error text must not recommend `*`".)
 Provides: D7 leftover
-Depends on: 01, 03, 05
+Depends on: 01, 02, 03, 05
 Target membership: inside
 Out: Marketing copy unrelated to these defaults.

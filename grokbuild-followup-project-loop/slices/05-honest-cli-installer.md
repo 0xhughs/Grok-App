@@ -154,14 +154,14 @@ Review events:
 - E2 / `D05-IMPL-1` / implementation / APPROVE_IMPLEMENTATION / contract `05d3fd9c…fdf8`, candidate `4e993693…bc85` / no gaps / counters frozen: rejections 0, no-progress 0
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
-Advance phase: archive written; next selected
-Next slice ID / draft: 06 (pending `D06-DRAFT-1`)
+Advance phase: archive pending
+Next slice ID / draft: 06
 Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–04.
 
 ## Status
 Shipped (implementation approved `D05-IMPL-1`; code commit `6eecaf7a`, candidate `4e993693…bc85`)
 
 ## Next
-Archive written and verified. SLICES Shipped includes 05; Now is 06. Dispatch `D06-DRAFT-1` (Builder draft-proposal, no code edits). After draft: replace BUILD.md with the 06 Proposed page, zero counters, plan review `D06-PLAN-1`.
+Coordinator: archive this page to `slices/05-honest-cli-installer.md`, add 05 to SLICES Shipped, select 06 as Now, dispatch Builder draft-proposal for 06 (no code edits), then replace BUILD.md with the 06 Proposed page.
 
-**Resume action:** launch `D06-DRAFT-1` (Builder draft-proposal for slice 06 Restrict leftover headless children). State is `launching` with no result — treat prior launch as never started (Task results are terminal). Do not re-ship 01–05. Do not implement Later-outside work. Do not publish.
+**Resume action:** dispatch `D06-DRAFT-1` (Builder draft-proposal for slice 06 Restrict leftover headless children). Do not re-ship 01–05. Do not implement Later-outside work. Do not publish.

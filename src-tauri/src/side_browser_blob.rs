@@ -1170,6 +1170,7 @@ pub fn install_hook(app: &AppHandle, label: String) -> Result<(), String> {
     if t.is_empty() {
         return Err("label empty".into());
     }
+    crate::side_browser_host::validate_side_label(t)?;
     let wv = app
         .get_webview(t)
         .ok_or_else(|| format!("side browser webview not found: {t}"))?;
@@ -1423,6 +1424,14 @@ fn handle_protocol(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn install_hook_rejects_first_party_labels() {
+        for label in ["main", "session-x", "pet", "theme-editor"] {
+            assert!(crate::side_browser_host::validate_side_label(label).is_err());
+        }
+        assert!(crate::side_browser_host::validate_side_label("resource-browser-x").is_ok());
+    }
 
     #[test]
     fn signal_titles() {

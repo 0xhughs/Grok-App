@@ -34,3 +34,30 @@ include!("misc_p1.rs");
 include!("misc_p2.rs");
 include!("terminal.rs");
 include!("skin.rs");
+
+pub(crate) const MAIN_ONLY_IPC_ERR: &str = "this command may only be invoked from the main window";
+
+pub(crate) fn require_main_window_label(label: &str) -> Result<(), String> {
+    if label.trim() == "main" {
+        Ok(())
+    } else {
+        Err(MAIN_ONLY_IPC_ERR.into())
+    }
+}
+
+#[cfg(test)]
+mod ipc_gate_tests {
+    use super::*;
+
+    #[test]
+    fn require_main_window_label_allows_only_main() {
+        assert!(require_main_window_label("main").is_ok());
+        assert!(require_main_window_label("  main  ").is_ok());
+        for label in ["session-abc", "pet", "theme-editor", "", "Main"] {
+            assert_eq!(
+                require_main_window_label(label).unwrap_err(),
+                MAIN_ONLY_IPC_ERR
+            );
+        }
+    }
+}
