@@ -18,7 +18,7 @@ The owner running this pack in Google Antigravity against a local clone of https
 Slices 01–09 inclusive. Stop when Now is `None — target complete` and release gates pass. Do not implement Later-outside work. Do not publish or deploy.
 
 ## Run status
-Finalizing
+Complete
 
 ## Open decisions
 None remaining. Locked from the audit:
@@ -38,10 +38,11 @@ None remaining. Locked from the audit:
 - README_EN.md, SECURITY.md, docs/features/remote-security.md match the new defaults.
 
 ## Release evidence
-Pending finalization.
+Complete. `D-REL-1` APPROVE_RELEASE — reviewer `bc-e6810b08-6f8c-5151-96d5-8a31a79ec008`, candidate `78db65f73f1c9f1b869748d461708202057063fdc7a3550992b31792e5b59e65` (code HEAD `a1d3fa5a`). Coordinator recomputed identities at consume time: `/workspace` and `/tmp/loop-review/D-REL-1` both HEAD `d48f708c`, CANDIDATE `78db65f7…9e65` / CONTRACT `582f6120…550e` / MODE=clean-tree.
 Failed release reviews for this target: 0
 Pending release result: none
-Release review events / last consumed dispatch: none
+Release review events / last consumed dispatch:
+- `D-REL-1` / release / APPROVE_RELEASE / candidate `78db65f7…9e65` / all five gates PASS / last consumed `D-REL-1`
 
 ## Shipped
 - 01 Restore real CI pins — C1, N7 — code commit `73193a0e`, candidate `8c79e574…341e`, implementation approval `D01-IMPL-1`; archive `slices/01-restore-real-ci-pins.md`. Note: `dtolnay/rust-toolchain` pinned to `refs/heads/stable` tip (no tag exists) — sanctioned exception; checker reports UNKNOWN_SHA when the branch moves (fail-closed).
