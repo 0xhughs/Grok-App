@@ -1,167 +1,162 @@
 # BUILD.md
 
-Slice: 05 Honest CLI installer
-Archive: slices/05-honest-cli-installer.md
+Slice: 06 Restrict leftover headless children
+Archive: slices/06-restrict-leftover-headless-children.md
 
 ## Goal
-`KNOWN_CLI_HASHES` is **removed** (not regenerated). With no published sidecar, trust is TOFU: first digest is recorded; a later different digest is a **hard error** unless the existing UI/env override is on. The first-seen hash store is written **0600**. Published-sidecar mismatch still always aborts. `GROK_CLI_REQUIRE_CHECKSUM` stays opt-in. Ask stays default.
+Leftover headless children `session_title`, `agent_workflows`, and `streaming_messages_json` use the same restricted-child contract as `official_aux`: `--no-subagents`, `--disallowed-tools` containing the official_aux comma list, pinned cwd (never the app process cwd), and `--always-approve` only when the **invoking session’s effective** policy is YOLO (`PermissionPolicy::AlwaysApprove`). Batch headless uses that invoking session, not `sessions.first()`. Fail closed: no / unknown session / untrusted project → Ask → no `--always-approve`. Interactive parent-session subagents stay on. Ask stays default.
 
 ## Done when
-**Pick (only this, not a menu): remove the known-good table.** Do not generate a replacement table, do not commit a generator, do not check in `KNOWN_CLI_HASHES.sha256`, do not download-and-pin current stable `1.0.13` (or any other version) as a new baked list.
+Close **P2 leftover, N4, N5** only. Do not reopen Held IDs. Do not implement slices 07–09. Do not change `official_aux` / `models_aux` / `wallpaper_source` policy source (audit residual: those still resolve YOLO from **global** only — Out).
 
-Locked C2: no fabricated known-good table; first-seen change is a hard error with UI override. Live evidence (`D05-DRAFT-1`; not invented):
+Locked family (copy; do not invent a new tool list). Official_aux value at `official_aux.rs:224`:
 
-| What | URL | Result |
-|---|---|---|
-| stable pointer | `GET https://storage.googleapis.com/grok-build-public-artifacts/cli/stable` | `200` body `1.0.13` |
-| sidecar candidates on both mirrors | HEAD `*.sha256` / `SHA256SUMS` / etc. | all **404** |
-| table pin `grok-0.2.111-linux-x86_64` | in-tree `cli_install.rs:92–94` | `c903e1fa07d52436…` |
-| same artifact | `GET …/cli/grok-0.2.111-linux-x86_64` | `f158d0d43367c395…` (**≠ table**; matches audit N8) |
+`run_terminal_cmd,run_terminal_command,search_replace,write,Agent,spawn_subagent,bash,bash_tool`
 
-Install resolves `CHANNEL = "stable"` → **1.0.13 today**. The table only lists 0.2.100/110/111 and cannot protect current stable.
+Every leftover `--disallowed-tools` value **must contain each of those tokens**. Do not shrink that set. Extra denials already on `session_title` (`web_search`, `web_fetch` + `--disable-web-search`) **stay** (title is text-only). Do not add `workflow` to the list (`agent_workflows` must still be able to call the `workflow` tool).
 
-### C2 — delete fabricated table
-- Delete `KNOWN_CLI_HASHES` (`cli_install.rs:81–157`), `lookup_known_cli_hash` (`:161–171`), and `is_known_cli_hash` (`:174–181`).
-- In `install_cli_latest` (`:944–987`), delete the `is_known_cli_hash` / `lookup_known_cli_hash` arms (`:958–965`). After a published sidecar `None`, every artifact goes through first-seen (then the existing missing-sidecar `require_published_checksum` gate). Sidecar `Some` + digest mismatch still `Err` and deletes the temp file (`:948–952`). No override on sidecar mismatch.
-- Delete test `known_cli_hash_lookup_and_verification` (`:1199–1226`).
-- Grep (cwd `/workspace`, Proof lists `-n`):
-  - `rg -n 'KNOWN_CLI_HASHES|lookup_known_cli_hash|is_known_cli_hash' src-tauri/src` → **0**
-  - `rg -n 'c903e1fa07d52436|a7f1c9d8e5b30214|fabricated' src-tauri/src/cli_install.rs` → **0**
+`--always-approve` only when `effective_permission_policy(global, project_trusted, project_policy, session_policy)` is `AlwaysApprove` for a **found** invoking session. Missing/blank/unknown `session_id` → treat as Ask → **no** `--always-approve` (do **not** fall through to global YOLO; that is the official_aux residual, out of scope here). `project_trusted == Some(false)` → Ask (existing helper). Ask / AcceptEdits / DontAsk / Deny / Auto / missing → no `--always-approve`.
 
-### N8 — first-seen change is a hard error; store 0600; existing UI override
-- Keep `FirstSeenStatus` (`:185–189`): `RecordedNew` | `MatchedExisting` | `Changed { previous, current }`.
-- `pub fn check_or_update_first_seen_hash_in_file` (`:205–271`): on `None` → insert + write + `RecordedNew`; on case-insensitive match → `MatchedExisting` (no write); on **Changed → return `Changed` and do not write** (today `:253` overwrites and `:261–267` persists the new hash — that is the bug). Write failures on `RecordedNew` are `Err`, not `let _ =`.
-- `pub fn accept_first_seen_hash_in_file(store_path, artifact_name, hash) -> Result<(), String>` — overwrite that key and write 0600. Only the override path calls this.
-- `fn write_hash_store_0600(path, bytes)` (same module): Unix `OpenOptions` create/truncate `.mode(0o600)` + `set_permissions(0o600)` (same pattern as `agent_home_config.rs:587–595`). Non-Unix: `fs::write`. Do **not** edit `agent_home_config.rs` (slice 07). Do **not** route `~/.grok/first_seen_hashes.json` through `write_private_agent_home_file`.
-- `pub enum FirstSeenGate { ProceedUnverified, RefuseChanged { previous: String, current: String }, AcceptedChange }`
-- `pub fn first_seen_install_gate(status: FirstSeenStatus, allow_unverified: bool) -> FirstSeenGate`:
-  - `RecordedNew` | `MatchedExisting` → `ProceedUnverified`
-  - `Changed` && `allow_unverified` → `AcceptedChange`
-  - `Changed` && `env_flag_truthy("GROK_CLI_ALLOW_UNVERIFIED")` → `AcceptedChange`
-  - else `Changed` → `RefuseChanged`
-- `pub fn first_seen_change_error(artifact_name, previous, current) -> String` must contain all of: `first-seen hash changed`, the artifact name, `previous=`, `current=`, `Allow unverified CLI install`, `GROK_CLI_ALLOW_UNVERIFIED`, and `No published SHA-256`. Must **not** contain `SHA-256 mismatch` / `checksum mismatch` or `GROK_CLI_REQUIRE_CHECKSUM`.
+Do not use `sessions.first()`. Do not use `session.permission_policy` alone when a project override or untrusted project would change the effective tier.
 
-**Wire into `install_cli_latest` only**, sidecar-`None` branch (today `:957–985`). Replace `let _ = verify_or_record_first_seen_hash(...)` (`:968`) with:
-1. `status = verify_or_record_first_seen_hash(&artifact_name, &digest)?`
-2. `match first_seen_install_gate(status, allow_unverified)` — `RefuseChanged` → remove temp + `Err(first_seen_change_error)`; `AcceptedChange` → `accept_first_seen_hash_in_file` then continue; `ProceedUnverified` → continue
-3. Existing `require_published_checksum(allow_unverified)` missing-sidecar refuse (`:971–978`) unchanged.
+### N4 — leftover children: restricted argv, pinned cwd, conditional approve
 
-**UI override (reuse, do not add a setting):** `allow_unverified_cli_install` (default false). No new Settings key, no i18n, no `App.tsx` state, no `window.confirm`.
+**`session_title.rs`** (today `:178–196`: `--always-approve` unconditional; `--no-subagents` + **superset** disallowed list; **no** `current_dir`; `llm_title_via_cli` has no session id; `auto_title_session_fast(id, …)` / `refine_title_in_background(…, id, …)` have one)
 
-**Do not** default `GROK_CLI_REQUIRE_CHECKSUM` on. `require_checksum_policy_default_and_strict_env` stays.
+- Extract a pure args builder (family of `build_official_aux_args`), e.g. `title_headless_args(prompt, is_yolo) -> Vec<String>` (name may vary; tests call it). Include existing `-p` / `--effort low` / `--max-turns 2` / `--no-subagents` / `--disable-web-search` / `--disallowed-tools` (keep extras). Push `--always-approve` only if `is_yolo`.
+- `llm_title_via_cli` takes the invoking session id. Resolve YOLO via `effective_permission_policy` for that id + its project + global; unknown/missing id → Ask.
+- Pin `current_dir` to `std::env::temp_dir()` (audit N4). Never inherit the app cwd. Never use a project path for the title child.
+- `auto_title_session_fast` / IPC `session_auto_title` signatures stay; refine already has `id` — pass it through.
 
-**Named tests** in `cli_install.rs` `mod tests` (names normative):
-- `first_seen_hashes_recording_and_warning_on_change` — **flip**: after `Changed` for `h2`, the file still contains `h1` and a follow-up `check_or_update` with `h2` is still `Changed`.
-- `first_seen_install_gate_refuses_change_without_override`
-- `first_seen_accept_change_writes_new_hash`
-- `first_seen_store_mode_0600` (`#[cfg(unix)]`)
-- `first_seen_change_error_lists_override_and_avoids_mismatch_classifier`
+**`agent_workflows.rs`** (today `:490–507` `workflow_run_args`: `--always-approve` unconditional, **no** `--no-subagents` / `--disallowed-tools`; spawn `:714–716` cwd = project if dir else temp; test `run_args_include_plain_and_approve` at `:1040` **asserts presence**; `run_workflow*` have no session id)
+
+- Change `workflow_run_args` to take an `is_yolo: bool` (or equivalent policy flag). Always emit `--no-subagents` and `--disallowed-tools` with the official_aux comma list. Push `--always-approve` only if `is_yolo`. Keep `--max-turns` 4 validate / 8 launch, `--effort low`, `--output-format plain`.
+- **Flip** `run_args_include_plain_and_approve` (`:1040`): Ask (`is_yolo = false`) asserts **absence** of `--always-approve`. Same test (or a sibling in the official_aux family) still asserts plain / turn counts.
+- Thread optional `session_id` through `run_workflow`, `run_workflow_with_app`, `run_workflow_inner`, and IPC `workflows_run`. Spawn site computes `is_yolo` from the invoking session. Omit/unknown → Ask.
+- Cwd stays project-if-real-dir else `std::env::temp_dir()` (`:698–703`). Never inherit the app cwd. Do not force-temp when `project_path` is a real directory (workflow tool needs the project).
+
+**`streaming_messages_json.rs`** (today `:181–195`: `--always-approve` unconditional; no `--no-subagents` / `--disallowed-tools`; cwd already `std::env::temp_dir()`. Fixed-prompt capability probe; no session)
+
+- Extract `streaming_probe_args(include_partial, is_yolo) -> Vec<String>` (name may vary). Always `--no-subagents` + official_aux `--disallowed-tools`. Push `--always-approve` only if `is_yolo`. Keep `-p` `PROBE_PROMPT`, `--max-turns 1`, `--effort low`, `--output-format` `OUTPUT_FORMAT`, optional `--include-partial-messages`.
+- Spawn site always passes `is_yolo = false` (no session → Ask). Keep cwd `std::env::temp_dir()`. Do not add `session_id` to `probe_streaming_messages_json` / `streaming_messages_json_probe`.
+
+### N5 — batch uses invoking session, not `sessions.first()`
+
+**`batch_agents.rs`** (today `:171–183` `run_batch_headless` uses `sessions.first()` then `s.permission_policy`; `batch_headless_args` already gates YOLO and already has the official_aux tool list; `:79` is `map_or(false,` — clippy `unnecessary_map_or`)
+
+- `run_batch_headless` takes `session_id: Option<&str>` (or equivalent). Look up **that** id in the session index. Resolve **effective** policy (session + its project + global). Do **not** call `sessions.first()`.
+- Missing/blank/unknown `session_id` → Ask args (still **run** the child if path/prompt are valid). Do not refuse with `no_session` solely because id was omitted; do not revive `sessions.first()` as a fallback.
+- Keep `batch_headless_args(prompt, parent_policy: Option<&str>)`. The string passed in is the **effective** policy (`PermissionPolicy::as_str()`, e.g. `always_approve` / `ask`), not a raw index-first field. `None` / `ask` → no `--always-approve`.
+- Fix `:79` `map_or(false, …)` (e.g. `is_some_and`) so the clippy `-D warnings` baseline **drops this site**. Do not touch `path_scope.rs:129` or `wecom.rs:210`.
+
+**IPC + FE thread**
+
+- `commands/misc_p1.rs:1271` `batch_agents_headless(project_path, prompt, timeout_ms)` gains optional `session_id: Option<String>`. Old callers that omit it fail closed / Ask, not `sessions.first()`.
+- `src/lib/api/voice.ts:121` `batchAgentsHeadless` gains optional `sessionId`.
+- `AppWorkbench.tsx` existing `api.batchAgentsHeadless({…})` (`:11218`) passes the focused `session.sessionId` when present. **No new `useState` / feature block** in `App.tsx` / `AppWorkbench.tsx` (growth freeze): one field on an existing invoke only.
+- `commands/worktree_agents_p1.rs:146` `workflows_run` gains optional `session_id`. `src/lib/api/agents.ts` `workflowsRun` gains optional `sessionId`. Settings `WorkflowsDiscoveryBlock` / `WorkflowsSettingsBlock` has no session today — **omit** (Ask). Do not plumb a new Settings session field through App shell.
+
+`#[tauri::command]` count stays **423**. Prefer optional args on existing commands; do not add a new command.
+
+### Interactive parent stays ON
+Do not add `--no-subagents` to the interactive parent ACP spawn (`acp_client.rs` `apply_subagents_to_command(&mut cmd, subagents_enabled)`). Out: “Disabling parent-session subagents.”
+
+### Named tests (names normative)
+Family of `official_aux_args_restricted_and_conditional_always_approve` (`official_aux.rs:2579`): each leftover args builder asserts Ask vs YOLO **separately** — `--no-subagents` present both; official_aux tokens present in `--disallowed-tools` value both; `--always-approve` absent on Ask, present on YOLO.
+
+- `session_title`: `title_args_restricted_and_conditional_always_approve` — Ask vs YOLO; official_aux tokens; extras `web_search` / `web_fetch` still in the value; `--disable-web-search` still present.
+- `agent_workflows`: **flip** `run_args_include_plain_and_approve` so Ask asserts **absence** of `--always-approve`; extend that test or add `workflow_run_args_restricted_and_conditional_always_approve` for family flags + YOLO presence. Keep plain / `4` / `8` asserts.
+- `streaming_messages_json`: `streaming_probe_args_restricted_and_conditional_always_approve` — builder Ask vs YOLO (spawn site still always Ask).
+- `batch_agents`: keep `args_restricted_in_ask_and_always_approve_in_yolo`. Add `batch_invoking_session_not_index_first`: two in-memory sessions (first in index YOLO `always_approve`, invoking id Ask) → resolved effective policy is Ask → `batch_headless_args` has **no** `--always-approve`. Also: unknown id → Ask; invoking YOLO + `project_trusted = false` → Ask; invoking YOLO + trusted / no project → YOLO. Do not load the live session store for this test (pure lookup over injected slices).
+
+Title cwd: test or grep that the title spawn sets `current_dir` to `std::env::temp_dir()` (or a helper that returns that path).
 
 `#[tauri::command]` count stays **423**. No file outside Files changes.
 
-Grep:
-- `rg -n 'fn write_hash_store_0600|fn accept_first_seen_hash_in_file|fn first_seen_install_gate|fn first_seen_change_error' src-tauri/src/cli_install.rs` — each present.
-- `rg -n 'fs::write\(store_path' src-tauri/src/cli_install.rs` → **0**
-- `rg -n 'FirstSeenStatus::Changed' src-tauri/src/cli_install.rs` — enum, no-write arm, gate, tests (Proof lists each).
+Grep (cwd `/workspace`, Proof lists `-n`):
+- `rg -n 'sessions\.first\(\)' src-tauri/src/batch_agents.rs` → **0**
+- `rg -n '--always-approve' src-tauri/src/session_title.rs src-tauri/src/agent_workflows.rs src-tauri/src/streaming_messages_json.rs` — only inside `is_yolo` / YOLO branches of the args builders (and the YOLO half of tests), **not** unconditional `.arg("--always-approve")` / `vec![… "--always-approve" …]`
+- Official_aux tokens appear in each leftover `--disallowed-tools` value (`run_terminal_cmd`, `run_terminal_command`, `search_replace`, `write`, `Agent`, `spawn_subagent`, `bash`, `bash_tool`)
+- `rg -n 'current_dir' src-tauri/src/session_title.rs` — spawn pins temp (not absent)
+- `rg -n '--no-subagents' src-tauri/src/acp_client.rs` — no new parent-path disable (existing `apply_subagents_to_command` / setting-gated helper only)
+- `rg -n 'effective_permission_policy\(' src-tauri/src/official_aux.rs src-tauri/src/models_aux.rs src-tauri/src/wallpaper_source.rs` — still global-only (`None, None, None`); this slice does not change those call sites
 
 ## Out
-- Hosting a new artifact bucket. Do not upload, mirror, or commit CLI binaries or a new checksum host.
-- Regenerating `KNOWN_CLI_HASHES` from downloads; adding a generator; checking in `KNOWN_CLI_HASHES.sha256`.
-- Inventing or baking measured `1.0.13` / `0.2.111` hashes as a new known-good table.
+- Disabling parent-session subagents. Do not add `--no-subagents` to the interactive ACP parent spawn.
+- Changing `official_aux` / `models_aux` / `wallpaper_source` policy source (global vs invoking session). Residual: an Ask session under a YOLO-global install still gets YOLO aux children. Not this slice.
+- Expanding `--disallowed-tools` to host `is_edit_tool` ids (`apply_patch`, `create_file`, …). CLI honour of `--no-subagents` / `--disallowed-tools` remains Unverified.
 - Held IDs. Do not reopen P1, P3, P4, P5, R1, R2, R3, R5, R6, S1, S3, C3, D1–D6.
-- Defaulting `GROK_CLI_REQUIRE_CHECKSUM` on / changing `store.rs` defaults / new Settings keys / i18n / `settingsCatalog` / docs (slice 09).
-- Overriding published-sidecar mismatch. Changing `MIRROR_BASES`. Widening `allow_from`. Disabling parent-session Grok subagents.
-- Editing `agent_home_config.rs` (slice 07).
-- Frontend / Setup wizard new error kinds (reuse existing `checksum_missing` via required error tokens).
-- rustfmt-rewrite of pre-existing dirt in `cli_install.rs`. Slices 06–09. Publishing / deploying.
+- Slices 07–09: `agent_home_config.rs`, `path_scope.rs`, docs / i18n / `settingsCatalog` / `store.rs` defaults.
+- New Settings keys, capabilities edits (unless a compile error from the optional IPC field requires a documented signature-only change), publishing / deploying.
+- rustfmt-rewrite of the post-05 dirty set. Widening `allow_from`. Changing Ask default.
 
 ## Constraints
-- **Files:** `src-tauri/src/cli_install.rs` only. No `Cargo.toml` / `Cargo.lock`. No `src/`, i18n, docs, capabilities, `lib.rs`, `session_p1.rs`, `store.rs`, `cli_update.rs`, `agent_home_config.rs`.
-- Ask remains default. Do not change `store.rs` defaults.
-- Do not add crates. Do not add network to unit tests (temp-dir store only).
-- Rust style: new/changed hunks rustfmt-clean. **Do not rustfmt-rewrite pre-existing dirt** in `cli_install.rs` (already on the 16-file dirty list). rustfmt/clippy non-regression vs rustc 1.98.1 baseline: `cargo fmt --all -- --check` still exits 1 with diffs **only** in the same 16 files; `cargo clippy --all-targets -- -D warnings` still exactly `batch_agents.rs:79`, `path_scope.rs:129`, `wecom.rs:210`.
+- **Files:** `src-tauri/src/session_title.rs`, `src-tauri/src/agent_workflows.rs`, `src-tauri/src/streaming_messages_json.rs`, `src-tauri/src/batch_agents.rs`, IPC `src-tauri/src/commands/misc_p1.rs`, `src-tauri/src/commands/worktree_agents_p1.rs`, FE `src/lib/api/voice.ts`, `src/lib/api/agents.ts`, and the existing `AppWorkbench.tsx` `batchAgentsHeadless` invoke (sessionId pass-through only). A small fail-closed lookup helper + its unit test may live in `batch_agents.rs` (preferred) or as a thin wrapper next to `effective_permission_policy` in `permission.rs` if that avoids duplication — do **not** change `store.rs` defaults or `resolve_composer_prefs` fall-through-to-global. No `Cargo.toml` / `Cargo.lock`. No `agent_home_config.rs`, `path_scope.rs`, docs, i18n, capabilities, `lib.rs` handler list (count stays 423).
+- Ask remains default. Untrusted projects stay Ask.
+- Do not add crates. Args-builder tests are pure (no CLI spawn, no network).
+- App shell freeze: no new `useState` / feature blocks in `App.tsx` / `AppWorkbench.tsx`. Combined line count of those two files must not grow except the `sessionId` field on the existing batch invoke (keep the delta to that call).
+- Rust style: new/changed hunks rustfmt-clean. **Do not rustfmt-rewrite pre-existing dirt.** Post-05 dirty set is the previous 16 minus `cli_install.rs` (**15 files**): `agent_home_config.rs`, `batch_agents.rs`, `cli_update.rs`, `mirror/mod.rs`, `mirror/rpc.rs`, `models_aux.rs`, `official_aux.rs`, `path_scope.rs`, `permission.rs`, `relay_stream_proxy.rs`, `secrets.rs`, `serve.rs`, `session_manager/control.rs`, `store.rs`, `wallpaper_source.rs`. `session_title.rs` / `agent_workflows.rs` / `streaming_messages_json.rs` / IPC files are not on that list — they must stay fmt-clean (do not add them to the dirty set). `batch_agents.rs` / `permission.rs` (if touched) are already dirty: new hunks clean, leftover dirt untouched.
+- Clippy `-D warnings` after this slice: exactly `path_scope.rs:129`, `wecom.rs:210` (baseline minus `batch_agents.rs:79`).
 - Do not claim cargo passed unless that session ran it.
 
 ## Data / state impact
-- No settings / secret-store migration. `allow_unverified_cli_install` default stays **false**.
-- `~/.grok/first_seen_hashes.json`: new keys recorded at 0600; a digest change does **not** replace the stored hash unless Settings / `GROK_CLI_ALLOW_UNVERIFIED` / `cli_install_latest({allowUnverified:true})` accepted the change.
-- First install of current stable (or any un-sidecared artifact): `RecordedNew`, install continues (unless `GROK_CLI_REQUIRE_CHECKSUM=1` without override).
-- Re-install with a different digest for the same artifact name: hard `Err`, temp file removed, previous hash kept.
-- Sidecar present + match: `checksum_verified: true`; first-seen not consulted.
-- IPC `cli_install_latest` args unchanged.
+- No settings / secret-store migration. `store.rs` `permission_policy` default stays **ask**.
+- No new IPC commands. Optional `session_id` / `sessionId` on `batch_agents_headless` and `workflows_run` only. Omitted id → Ask child (no `--always-approve`).
+- Title refine still uses the session id it already has. Streaming probe stays session-less → Ask.
+- Settings workflow run without a session id stays Ask (Settings block has no session today).
+- Batch from the workbench passes the focused session id when present so a YOLO invoking session still gets `--always-approve`; an Ask invoking session does not inherit YOLO from an older index-first row.
+- Parent interactive sessions unchanged (subagents still follow `subagents_enabled`).
+- Residual: `--no-subagents` on the workflow **child** may limit nested Grok subagents inside the `workflow` tool. Locked. Interactive `/workflow` on the parent is unchanged.
 
 ## Tests
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib cli_install::tests` — existing tests minus deleted table test, plus the four new names and the flipped first-seen test; `0 failed`.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib session_title::tests` — existing title tests plus `title_args_restricted_and_conditional_always_approve`; `0 failed`.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib agent_workflows::tests` — flipped `run_args_include_plain_and_approve` (Ask absence) plus family/YOLO coverage; `0 failed`.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib streaming_messages_json::tests` — existing probe tests plus `streaming_probe_args_restricted_and_conditional_always_approve`; `0 failed`.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib batch_agents::tests` — existing args/soft-fail tests plus `batch_invoking_session_not_index_first`; `0 failed`.
 - Grep criteria in Done when; each listing + count in Proof.
-- Lint non-regression: dirty set identical to the 16-file baseline; clippy exactly the three baseline lints.
-- Scope: `git diff --stat` vs the 05 implementation baseline lists exactly `src-tauri/src/cli_install.rs`.
-- No `pnpm vitest`. Implementation Proof runs `cli_install::tests`. Full `cd src-tauri && cargo test` required; expected `0 failed` (or the same pre-existing parallel flake outside Files as slice 04, with serial `--test-threads=1` green).
+- Lint non-regression: `cargo fmt --all -- --check` still exits 1 with diffs **only** in the 15-file post-05 set (no new dirty files; `cli_install.rs` stays clean). `cargo clippy --all-targets -- -D warnings` exactly `path_scope.rs:129`, `wecom.rs:210`.
+- Scope: `git diff --stat` vs this slice’s implementation baseline lists only Files.
+- No `pnpm vitest` required (no new i18n / settings catalog). Implementation Proof runs the four lib test filters above.
+- Full `cd src-tauri && cargo test` required at implementation; expected `0 failed` (or the same pre-existing parallel flake outside Files as prior slices, with serial `--test-threads=1` green). Do not claim it passed in this contract.
 
 ## Proof
-Builder `D05-BUILD-1` (agent `bc-c87ac3cb-526c-5bb4-9de0-f6657f7cd15f`), implemented in `/workspace` at HEAD `d876a9c1`, committed by coordinator as `6eecaf7a` (code-only). Candidate identity (clean-tree) `4e993693b764fef77241fbeab1c8335db1e82e292707ca104f65567d6758bc85`. Changed paths: exactly `src-tauri/src/cli_install.rs` (+286/−193). Rust `rustc 1.98.1`. Logs under `/tmp/build05/`. Command count 423.
-
-Implementation: table/lookup/`is_known_cli_hash` deleted. First-seen `Changed` does not write; install hard-errors unless `allow_unverified` / `GROK_CLI_ALLOW_UNVERIFIED`. Store writes via `write_hash_store_0600`. Sidecar mismatch still always aborts. `GROK_CLI_REQUIRE_CHECKSUM` stays opt-in. `first_seen_change_error` uses 16-hex prefixes so the string stays under 280 chars.
-
-### Done when → evidence
-- `rg KNOWN_CLI_HASHES|lookup_known_cli_hash|is_known_cli_hash` → 0. Fabricated hex / `fabricated` → 0. `fs::write(store_path` → 0.
-- Helpers present: `write_hash_store_0600` `:130`, `accept_first_seen_hash_in_file` `:212`, `first_seen_install_gate` `:241`, `first_seen_change_error` `:258`.
-- `FirstSeenStatus::Changed` uses: no-write arm `:196`, gate `:246`, flipped test `:1229`/`:1242`, gate test `:1259`. Enum line is `Changed {` `:85` (not this pattern).
-- Named tests present (below). Table test absent.
-
-### Tests → evidence
-- `cli_install::tests`: `ok. 14 passed; 0 failed` (exit 0).
-- Full `cd src-tauri && cargo test`: `ok. 1657 passed; 0 failed; 1 ignored` (exit 0). No PTY flake this run. 1657 = slice-04 1654 − 1 table test + 4 new.
-- Lint: `cargo fmt --all -- --check` exit 1. Dirty set is the baseline **16 minus `cli_install.rs` (15 files)** — required C2 deletions removed the only rustfmt-dirty hunks in that file (table/lookup/old write-on-Changed). New hunks fmt-clean; no rustfmt rewrite of leftover dirt; no new dirty files. Clippy non-fatal exit 0 / 3 warnings; `-D warnings` exit 101 at the three baseline sites.
-
-Caveats: `session_p1.rs` comment about the known-good table is stale (Files=1). Setup still classifies the host error as `checksum_missing` (kind collapse, accepted at plan review).
+Not completed yet. Draft `D06-DRAFT-1` (Builder `bc-14d8ff05-c880-579a-b11b-358a3151e167`) produced this Proposed page. No code edits.
 
 ## Review
-Plan approval: `D05-PLAN-1` APPROVE_PLAN — reviewer `bc-f5f71d69-183d-5d4f-895f-e0cf212086f2`, contract `05d3fd9c…fdf8`, candidate `308f6af6…9b8c`.
-Implementation approval: `D05-IMPL-1` APPROVE_IMPLEMENTATION — reviewer `bc-901cfab3-4b90-52cf-a12d-a633b73563cc`, contract `05d3fd9c…fdf8`, candidate `4e993693…bc85` (code HEAD `6eecaf7a`). Coordinator recomputed identities at consume time: `/workspace` and `/tmp/loop-review/D05-IMPL-1` both HEAD `bf040667`, CANDIDATE `4e993693…bc85` / CONTRACT `05d3fd9c…fdf8` / MODE=clean-tree. Counters frozen at 0/0.
+Pending plan review.
+Plan approval: none
+Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
-
-### D05-IMPL-1 — APPROVE_IMPLEMENTATION (recorded verbatim summary)
-Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-901cfab3-4b90-52cf-a12d-a633b73563cc`, worktree `/tmp/loop-review/D05-IMPL-1` @ `bf040667`.
-Contract `05d3fd9c…fdf8` (match). Candidate before/after `4e993693…bc85` (unchanged, clean-tree). Porcelain empty. Scope vs `51330f48`: exactly `cli_install.rs`.
-Every Done when and Tests bullet remapped: table gone; sidecar mismatch always aborts; Changed does not write; 0600 store; gate + override; error 186 chars with required tokens; `cli_install::tests` 14/0; full suite `1657 passed; 0 failed; 1 ignored`. Lint dirty set 15 (baseline 16 minus `cli_install.rs` after required deletions). Clippy 3 baseline. No blockers.
-
-### D05-PLAN-1 — APPROVE_PLAN (recorded verbatim summary)
-Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-f5f71d69-183d-5d4f-895f-e0cf212086f2`, worktree `/tmp/loop-review/D05-PLAN-1` @ `b37a59e0`.
-Contract `05d3fd9c…fdf8` (match). Candidate before/after `308f6af6…9b8c` (unchanged, clean-tree). Porcelain empty. Code vs `51330f48` empty.
-Judgments: (a) remove-table within authority (Goal “or removed”; sidecars 404; table ≠ live 0.2.111; stable 1.0.13); (b) first-seen hard error + 0600 + no slice 07 leak; (c) reuse allow-unverified + `checksum_missing` tokens is kind collapse not a host lie (Files=1); (d) tests/greps satisfiable; (e) one slice. No blockers.
-Observations: `rg FirstSeenStatus::Changed` will not hit the enum variant line (`Changed {`); Proof should list uses. Error strings ≥280 chars drop Setup detail. `session_p1.rs` comment will be stale (Files=1).
 
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
-Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Builder / draft-proposal / slice 06
-Dispatch ID / launch state / input identity: `D06-DRAFT-1` / launching / candidate `4e993693…bc85` (code HEAD `6eecaf7a`), no 06 contract yet (draft)
-Pending result / last consumed dispatch: none / `D05-IMPL-1`
+Coordinator: Cursor Cloud Agent session, branch `cursor/slice-06-restrict-headless-9f74` off `origin/main` `fbb03fc8`.
+Worker / role / phase: Reviewer / plan / slice 06
+Dispatch ID / launch state / input identity: `D06-PLAN-1` / launching / candidate `4e993693b764fef77241fbeab1c8335db1e82e292707ca104f65567d6758bc85` (HEAD `fbb03fc8`, clean-tree once protocol-only dirt is excluded)
+Pending result / last consumed dispatch: none / `D06-DRAFT-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
 - Coverage: entire tracked tree outside the pack dir.
 - Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/`.
-Baseline snapshot: slice 04 shipped candidate — HEAD `51330f4874b96679d104da58914f84c3b529960b` (code), clean-tree, CANDIDATE `308f6af69624dcd1d62d764a64074687d5ba65f24b00db68ff4847e7ec739b8c`
-Contract identity: `05d3fd9cb4c40d86f060ae401fdfc2353150da203fe6e015b91bd1d1f3f5fdf8`
-Candidate snapshot: HEAD `6eecaf7a3ef33ac37306f2490cdc2216326aec69` (code commit), clean-tree, CANDIDATE `4e993693b764fef77241fbeab1c8335db1e82e292707ca104f65567d6758bc85`
+Baseline snapshot: slice 05 shipped candidate — HEAD `fbb03fc8` (merge; code `6eecaf7a` + pack), clean-tree, CANDIDATE `4e993693b764fef77241fbeab1c8335db1e82e292707ca104f65567d6758bc85`
+Contract identity: `fa773d0f40ee8a972e8313128fdc9d844922669b66db3b6f8a380781b625bdff`
+Candidate snapshot: HEAD `fbb03fc8`, CANDIDATE `4e993693b764fef77241fbeab1c8335db1e82e292707ca104f65567d6758bc85`
 Rejection count: 0
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none
 Repair awaiting review: false
-Review events:
-- E1 / `D05-PLAN-1` / plan / APPROVE_PLAN / contract `05d3fd9c…fdf8`, candidate `308f6af6…9b8c` / no gaps / rejection count 0
-- E2 / `D05-IMPL-1` / implementation / APPROVE_IMPLEMENTATION / contract `05d3fd9c…fdf8`, candidate `4e993693…bc85` / no gaps / counters frozen: rejections 0, no-progress 0
+Review events: none
 Budget limit / consumed / measurement: Not configured; do not invent a budget
-Blocker / resume status / resume action / recheck condition / deadline: none
-Advance phase: archive written; next selected
-Next slice ID / draft: 06 (pending `D06-DRAFT-1`)
-Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–04.
+Blocker / resume status / resume action / recheck condition / deadline: if interrupted before `D06-PLAN-1` returns, re-dispatch `D06-PLAN-1` (Task results are terminal). Do not implement until APPROVE_PLAN. Do not publish.
+Advance phase: next selected; 06 Proposed page written; plan review launching
+Next slice ID / draft: 06 (`D06-PLAN-1` launching)
+Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–05.
 
 ## Status
-Shipped (implementation approved `D05-IMPL-1`; code commit `6eecaf7a`, candidate `4e993693…bc85`)
+Proposed
 
 ## Next
-Archive written and verified. SLICES Shipped includes 05; Now is 06. Dispatch `D06-DRAFT-1` (Builder draft-proposal, no code edits). After draft: replace BUILD.md with the 06 Proposed page, zero counters, plan review `D06-PLAN-1`.
+Coordinator: persist contract identity, commit protocol, invoke independent Reviewer `D06-PLAN-1`. Do not implement slice 06 before APPROVE_PLAN.
 
-**Resume action:** launch `D06-DRAFT-1` (Builder draft-proposal for slice 06 Restrict leftover headless children). State is `launching` with no result — treat prior launch as never started (Task results are terminal). Do not re-ship 01–05. Do not implement Later-outside work. Do not publish.
+**Resume action:** launch `D06-PLAN-1` (independent Reviewer, isolated worktree, no write). After APPROVE_PLAN: Status `Not started`, then Builder `D06-BUILD-1`. After REJECT_PLAN: Builder revises proposal, fresh plan review. Do not re-ship 01–05. Do not implement Later-outside work. Do not publish.
