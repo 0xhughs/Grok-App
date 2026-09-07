@@ -107,7 +107,24 @@ No file outside Files changes.
 - No `pnpm vitest` (no TS change). Implementation Proof runs `serve::tests` above. Full `cd src-tauri && cargo test` is required in implementation Proof (webkit2gtk present); expected `0 failed`.
 
 ## Proof
-none (Proposed; draft `D04-DRAFT-1` produced this page, no code)
+Builder `D04-BUILD-1` (agent `bc-23bd0c93-80a3-5bdc-abb9-277c24bbd4f5`), implemented in `/workspace` at HEAD `05d0c008`, committed by coordinator as `51330f48` (code-only). Candidate identity (clean-tree) `308f6af69624dcd1d62d764a64074687d5ba65f24b00db68ff4847e7ec739b8c`. Changed paths: exactly `src-tauri/src/serve.rs` (+191/−12), `src-tauri/src/serve_tests_ext.rs` (+131). Rust `rustc 1.98.1`. Logs under `/tmp/build04/`. Command count 423.
+
+Implementation: `build_serve_command` sets both env names; `env_remove` deleted. Probe is std `TcpStream` GET `/health` (800 ms timeouts → Inconclusive). `0.0.0.0`→`127.0.0.1`; `::`/`[::]`→`[::1]`. `serve_start` re-issue / port-open / deadline arms call `finish_serve_start_with_probe`. Slice 03 gate kept (`:850` before `spawn_blocking`). `--secret` off argv. Copy-paste CLI still `GROK_SERVE_SECRET=`.
+
+### Done when → evidence
+- `rg env_remove("GROK_AGENT_SECRET")` → 0. `cmd.env("GROK_AGENT_SECRET"` / `GROK_SERVE_SECRET` → exactly 1 each (`:639`, `:638`) inside `build_serve_command`. `.arg("--secret")` → 0.
+- `require_main_window_label` → exactly 1 at `:850` before `spawn_blocking`.
+- `collect_status_sync(true)` → exactly 1, inside `finish_serve_start_with_probe` (`:817`).
+- `probe_unauth_health` in `serve.rs`: `fn` `:567` + call `:795`. Tests in `serve_tests_ext.rs` `:310`/`:329`/`:353`. Zero in `serve_tcp_probe` / `serve_status` / `serve_stop`.
+- `UNAUTH_HEALTH_PATH` → 3 (const + URL builder + GET write).
+- Named tests present (below). Negative: pre-change `:506` `env_remove`; `GROK_AGENT_SECRET` was removed.
+
+### Tests → evidence
+- `serve::tests`: `ok. 18 passed; 0 failed` (exit 0). Includes the five new names plus flipped spawn test.
+- Full `cd src-tauri && cargo test` (parallel): exit 101, `1653 passed; 1 failed` — only `commands::terminal_tests::terminal_pty_spawn_rejects_untrusted_project_path` (`store::save_projects` race, outside Files). Isolated retry of that test exit 0. Serial `--test-threads=1`: `ok. 1654 passed; 0 failed; 1 ignored` (exit 0). 1654 = slice-03 1649 + 5 new.
+- Lint: `cargo fmt --all -- --check` exit 1, same 16-file dirty set (`serve.rs` remaining hunk is pre-existing `arg("agent")` chain). Clippy non-fatal exit 0 / 3 warnings; `-D warnings` exit 101 at the three baseline sites.
+
+Caveats: official CLI has no `/health` → typical start is Inconclusive (advertise + keep). Parallel full-suite flake is pre-existing and outside Files.
 
 ## Review
 Plan approval: `D04-PLAN-1` APPROVE_PLAN — reviewer `bc-32f2b77e-b62c-5c5d-97a1-21bd46c9a2ec`, contract `06efee0f…7869`, candidate `d72f7320…52a6`.
@@ -123,9 +140,9 @@ Observations: probe read/write timeout should map to Inconclusive; `http://{host
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Builder / implementation / slice 04
-Dispatch ID / launch state / input identity: `D04-BUILD-1` / launching / candidate `d72f7320…52a6` (code HEAD `0aed78ab`), contract `06efee0f…7869`, plan approval `D04-PLAN-1`
-Pending result / last consumed dispatch: none / `D04-PLAN-1`
+Worker / role / phase: Reviewer / implementation review / slice 04
+Dispatch ID / launch state / input identity: `D04-IMPL-1` / launching / candidate `308f6af6…9b8c` (code HEAD `51330f48`), baseline `d72f7320…52a6`, contract `06efee0f…7869`, plan approval `D04-PLAN-1`
+Pending result / last consumed dispatch: none / `D04-BUILD-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -133,7 +150,7 @@ Snapshot capture and recheck commands / coverage / exclusions:
 - Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/` (protocol + artifacts).
 Baseline snapshot: slice 03 shipped candidate — HEAD `0aed78abe79def986d98b7594a7625a334df8cc0` (code), clean-tree, CANDIDATE `d72f73209511cb4cae63933103c68287a8fabe2b8b64cbdc522a465f368252a6`
 Contract identity: `06efee0f18fe84a7bc576b708802f0fb726f8b787af66e68304841c362ed7869`
-Candidate snapshot: HEAD `0aed78abe79def986d98b7594a7625a334df8cc0` (code commit), clean-tree, CANDIDATE `d72f73209511cb4cae63933103c68287a8fabe2b8b64cbdc522a465f368252a6`
+Candidate snapshot: HEAD `51330f4874b96679d104da58914f84c3b529960b` (code commit), clean-tree, CANDIDATE `308f6af69624dcd1d62d764a64074687d5ba65f24b00db68ff4847e7ec739b8c`
 Rejection count: 0
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none
@@ -147,7 +164,7 @@ Next slice ID / draft: 05 (after 04 ships)
 Environment note: `cargo test` is linkable here — webkit2gtk-4.1 / gtk+-3.0 / rustc 1.98.1 stable, same as slices 02–03.
 
 ## Status
-Building (plan approved `D04-PLAN-1`; pending `D04-BUILD-1`)
+Ready for review (plan approved `D04-PLAN-1`; Builder candidate `51330f48` from `D04-BUILD-1`)
 
 ## Next
-Builder implements the approved contract in `/workspace`. On proof → Ready for review `D04-IMPL-1`. Do not rustfmt-rewrite dirty `serve.rs`. Set probe I/O timeout → Inconclusive. Test URL is normative (`http://127.0.0.1:2419/health`).
+Independent implementation review `D04-IMPL-1` in isolated worktree. On APPROVE_IMPLEMENTATION → Shipped, archive `slices/04-serve-secret-names.md`, advance to 05. On REJECT → rejection count 1, Builder repairs. If parallel `cargo test` hits only `terminal_pty_spawn_rejects_untrusted_project_path`, treat as the pre-existing store-race flake (outside Files; serial rerun 0 failed) unless the reviewer finds a Files regression.
