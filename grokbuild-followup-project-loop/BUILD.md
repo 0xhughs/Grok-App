@@ -120,7 +120,29 @@ Grep (cwd `/workspace`, Proof lists `-n`):
 - Full `cd src-tauri && cargo test` required at implementation; expected `0 failed` (or the same pre-existing parallel flake outside Files as prior slices, with serial `--test-threads=1` green). Do not claim it passed in this contract.
 
 ## Proof
-Not completed yet. Draft `D06-DRAFT-1` (Builder `bc-14d8ff05-c880-579a-b11b-358a3151e167`) produced this Proposed page. No code edits.
+Builder `D06-BUILD-1` (agent `bc-cdd8fe35-4a90-5ed7-850f-c8d66dbcf15c`), implemented in `/workspace` at HEAD `6444272b`, committed by coordinator as `0b536c3d` (code-only). Candidate identity (clean-tree) `f19f791bfe2e9f89e1de0415c7b89cf9ed3eec9f0c4cbcdae403748c1595f59c`. Changed paths: exactly the nine Files-list paths (+542/−135). Rust `rustc 1.98.1`. Command count 423.
+
+Implementation: leftover children use official_aux `--no-subagents` / `--disallowed-tools`; `--always-approve` only if invoking-session effective policy is YOLO; title cwd is temp; batch looks up the invoking session id (no `sessions.first()`). Missing/unknown id → Ask and still runs. Settings `workflowsRun` omits sessionId (Ask). Parent ACP subagents unchanged.
+
+### Done when → evidence
+- `rg -n 'sessions\.first\(\)' src-tauri/src/batch_agents.rs` → **0**
+- `--always-approve` in leftover files only inside `if is_yolo { args.push(...) }` plus Ask-absence / YOLO-presence asserts. No unconditional `.arg` / `vec![… "--always-approve" …]`
+- Official_aux tokens present in `TITLE_DISALLOWED_TOOLS` (plus `web_search`/`web_fetch`), `WORKFLOW_DISALLOWED_TOOLS`, `STREAMING_DISALLOWED_TOOLS`, `batch_headless_args`
+- `rg -n 'current_dir' src-tauri/src/session_title.rs` → `:209` `cmd.current_dir(title_child_cwd())` (temp)
+- `rg -n '--no-subagents' src-tauri/src/acp_client.rs` → **0** (parent still `apply_subagents_to_command`)
+- Aux residuals still `effective_permission_policy(..., None, None, None)` in official_aux / models_aux / wallpaper_source
+- `#[tauri::command]` count **423**
+
+### Tests → evidence
+- `session_title::tests`: `13 passed; 0 failed` (`title_args_restricted_and_conditional_always_approve`, `title_child_cwd_is_temp_dir`)
+- `agent_workflows::tests`: `10 passed; 0 failed` (flipped `run_args_include_plain_and_approve` + `workflow_run_args_restricted_and_conditional_always_approve`)
+- `streaming_messages_json::tests`: `4 passed; 0 failed` (`streaming_probe_args_restricted_and_conditional_always_approve`)
+- `batch_agents::tests`: `8 passed; 0 failed` (`batch_invoking_session_not_index_first`)
+- Full `cd src-tauri && cargo test`: `1662 passed; 0 failed; 1 ignored`
+- `cargo fmt --all -- --check` exit 1; dirty set is the 15-file post-05 list (`cli_install.rs` clean; leftover modules clean)
+- Clippy `-D warnings` exit 101 at exactly `path_scope.rs:129`, `wecom.rs:210` (`batch_agents.rs:79` gone)
+
+Caveats: `misc_p1.rs` / `worktree_agents_p1.rs` include rustfmt wrap of those assigned files (keeps them off the dirty set). AppWorkbench adds `sessionId` plus that id on the existing `useCallback` dep (no new `useState`). Residual: aux children still global-only; CLI flag honour Unverified.
 
 ## Review
 Plan approval: `D06-PLAN-1` APPROVE_PLAN — reviewer `bc-5a47d34b-6f8a-53db-af91-a1bf1a716fd3`, contract `fa773d0f…bdff`, candidate `4e993693…bc85`.
@@ -135,9 +157,9 @@ Judgments: (a) BUILD Goal through Tests matches SLICES Now 06 (P2 leftover, N4, 
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/slice-06-restrict-headless-9f74` off `origin/main` `fbb03fc8`.
-Worker / role / phase: Builder / implementation / slice 06
-Dispatch ID / launch state / input identity: `D06-BUILD-1` / launching / candidate `4e993693b764fef77241fbeab1c8335db1e82e292707ca104f65567d6758bc85`, contract `fa773d0f40ee8a972e8313128fdc9d844922669b66db3b6f8a380781b625bdff`
-Pending result / last consumed dispatch: none / `D06-PLAN-1`
+Worker / role / phase: Reviewer / implementation / slice 06
+Dispatch ID / launch state / input identity: `D06-IMPL-1` / launching / candidate `f19f791bfe2e9f89e1de0415c7b89cf9ed3eec9f0c4cbcdae403748c1595f59c` (code HEAD `0b536c3d`), contract `fa773d0f40ee8a972e8313128fdc9d844922669b66db3b6f8a380781b625bdff`
+Pending result / last consumed dispatch: none / `D06-BUILD-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -145,7 +167,7 @@ Snapshot capture and recheck commands / coverage / exclusions:
 - Exclusions: `target/`, `src-tauri/target/`, `node_modules/`, `dist/`, `grokbuild-followup-project-loop/`.
 Baseline snapshot: slice 05 shipped candidate — HEAD `fbb03fc8` (merge; code `6eecaf7a` + pack), clean-tree, CANDIDATE `4e993693b764fef77241fbeab1c8335db1e82e292707ca104f65567d6758bc85`
 Contract identity: `fa773d0f40ee8a972e8313128fdc9d844922669b66db3b6f8a380781b625bdff`
-Candidate snapshot: HEAD `fbb03fc8`, CANDIDATE `4e993693b764fef77241fbeab1c8335db1e82e292707ca104f65567d6758bc85`
+Candidate snapshot: HEAD `0b536c3d` (code commit), clean-tree, CANDIDATE `f19f791bfe2e9f89e1de0415c7b89cf9ed3eec9f0c4cbcdae403748c1595f59c`
 Rejection count: 0
 Consecutive no-progress repairs: 0
 Open acceptance gaps / prior failing evidence: none
@@ -153,15 +175,15 @@ Repair awaiting review: false
 Review events:
 - E1 / `D06-PLAN-1` / plan / APPROVE_PLAN / contract `fa773d0f…bdff`, candidate `4e993693…bc85` / no gaps / rejection count 0
 Budget limit / consumed / measurement: Not configured; do not invent a budget
-Blocker / resume status / resume action / recheck condition / deadline: if interrupted before `D06-BUILD-1` returns, re-dispatch `D06-BUILD-1` (Task results are terminal). Plan is approved. Do not publish.
-Advance phase: plan approved; implementation launching
-Next slice ID / draft: 06 (`D06-BUILD-1` launching)
+Blocker / resume status / resume action / recheck condition / deadline: if interrupted before `D06-IMPL-1` returns, re-dispatch `D06-IMPL-1`. Do not publish.
+Advance phase: implementation candidate committed; review launching
+Next slice ID / draft: 06 (`D06-IMPL-1` launching)
 Environment note: rustc 1.98.1 / webkit2gtk present, same as 02–05.
 
 ## Status
-Not started (plan approved `D06-PLAN-1`; implementation dispatch `D06-BUILD-1` launching)
+Ready for review (code commit `0b536c3d`, candidate `f19f791b…f59c`)
 
 ## Next
-Builder `D06-BUILD-1` implements the accepted contract. After proof: Ready for review, independent `D06-IMPL-1`.
+Independent Reviewer `D06-IMPL-1`. After APPROVE_IMPLEMENTATION: archive 06 and draft 07. After REJECT: Builder repairs.
 
-**Resume action:** launch `D06-BUILD-1` (Builder implementation of slice 06). After Builder returns: persist proof, commit code (not protocol), dispatch `D06-IMPL-1`. Do not re-ship 01–05. Do not implement Later-outside work. Do not publish.
+**Resume action:** launch `D06-IMPL-1` (isolated worktree, no write). Do not re-ship 01–05. Do not implement Later-outside work. Do not publish.
