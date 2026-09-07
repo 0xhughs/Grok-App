@@ -2,6 +2,6 @@
 
 Status: active
 
-Current slice: 07 0600 every agent-home secret write
-Temporary note: Code commit `e5600725`. Candidate `66debe65…4338`. Ready for review.
-Do next: `D07-IMPL-1`. After approve: archive 07, draft 08.
+Current slice: 08 Path scope and silent replay
+Temporary note: Slice 07 shipped (`D07-IMPL-1`, code `e5600725`, candidate `66debe65…4338`). Archive written.
+Do next: `D08-DRAFT-1` (proposal only). After approve plan: implement 08.

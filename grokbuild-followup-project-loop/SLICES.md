@@ -50,16 +50,9 @@ Release review events / last consumed dispatch: none
 - 04 Serve secret names — R7, N3 — code commit `51330f48`, candidate `308f6af6…9b8c`, implementation approval `D04-IMPL-1`; archive `slices/04-serve-secret-names.md`. Residual: official CLI has no `/health`; missing route is Inconclusive (advertise + keep, including non-loopback).
 - 05 Honest CLI installer — C2, N8 — code commit `6eecaf7a`, candidate `4e993693…bc85`, implementation approval `D05-IMPL-1`; archive `slices/05-honest-cli-installer.md`. Residual: Setup still classifies first-seen change as `checksum_missing`; docs/i18n until slice 09.
 - 06 Restrict leftover headless children — P2 leftover, N4, N5 — code commit `0b536c3d`, candidate `f19f791b…f59c`, implementation approval `D06-IMPL-1`; archive `slices/06-restrict-leftover-headless-children.md`. Residual: `official_aux` / `models_aux` / `wallpaper_source` still resolve YOLO from global only; CLI honour of `--no-subagents` / `--disallowed-tools` remains Unverified.
+- 07 0600 every agent-home secret write — S2, N6 — code commit `e5600725`, candidate `66debe65…4338`, implementation approval `D07-IMPL-1`; archive `slices/07-0600-every-agent-home-secret-write.md`. Residual: non-N6 `config.toml` writers (`extensions` / `models_aux` / `relay_stream_proxy` / `official_aux` sibling home) still use umask `fs::write`.
 
 ## Now
-### 07 0600 every agent-home secret write
-Goal: The six bare `fs::write` sites for `config.toml` and MCP OAuth tokens use `write_private_agent_home_file`.
-Provides: S2, N6
-Depends on: 01
-Target membership: inside
-Out: Rewriting the whole agent-home module.
-
-## Later
 ### 08 Path scope and silent replay
 Goal: Deny `agent-home/config.toml`, `~/.netrc`, `~/.kube`, `~/.docker/config.json`, `~/.npmrc`. Mirror attachments go through `path_scope`. Load-replay auto-answer is cancel unless the tool call is journaled.
 Provides: S4 leftover, N11, N9
@@ -67,6 +60,7 @@ Depends on: 03
 Target membership: inside
 Out: Verifying live Grok Build `@path` semantics.
 
+## Later
 ### 09 Docs match the leftover posture
 Goal: remote-security.md, README_EN.md, SECURITY.md state React-vs-host confirm, CLI-install verification, and CI pin-check reality. Remote IM user-facing copy and `docs/llm-wiki/remote-im.md` stop offering `*` for allow-from (i18n keys in `settings-remoteIm.ts` across all 15 locales, `en` authority) and the Remote IM panel save-time check refuses `*`-containing values, matching the slice 02 bridge default. (Amended by coordinator after `D02-DRAFT-1`: within authority under AGENTS "Docs must match code defaults after each slice that changes a default" and the locked R4 decision "error text must not recommend `*`".)
 Provides: D7 leftover
