@@ -2,6 +2,6 @@
 
 Status: active
 
-Current slice: 09 Docs match the leftover posture
-Temporary note: Code commit `a1d3fa5a`. Candidate `78db65f7…9e65`. Ready for review.
-Do next: `D09-IMPL-1`. After approve: archive 09, release review.
+Current slice: None — target complete
+Temporary note: Slice 09 shipped (`D09-IMPL-1`, code `a1d3fa5a`, candidate `78db65f7…9e65`). Archive written. Run status Finalizing.
+Do next: `D-REL-1` release review. Do not publish.

@@ -18,7 +18,7 @@ The owner running this pack in Google Antigravity against a local clone of https
 Slices 01–09 inclusive. Stop when Now is `None — target complete` and release gates pass. Do not implement Later-outside work. Do not publish or deploy.
 
 ## Run status
-Running
+Finalizing
 
 ## Open decisions
 None remaining. Locked from the audit:
@@ -52,11 +52,7 @@ Release review events / last consumed dispatch: none
 - 06 Restrict leftover headless children — P2 leftover, N4, N5 — code commit `0b536c3d`, candidate `f19f791b…f59c`, implementation approval `D06-IMPL-1`; archive `slices/06-restrict-leftover-headless-children.md`. Residual: `official_aux` / `models_aux` / `wallpaper_source` still resolve YOLO from global only; CLI honour of `--no-subagents` / `--disallowed-tools` remains Unverified.
 - 07 0600 every agent-home secret write — S2, N6 — code commit `e5600725`, candidate `66debe65…4338`, implementation approval `D07-IMPL-1`; archive `slices/07-0600-every-agent-home-secret-write.md`. Residual: non-N6 `config.toml` writers (`extensions` / `models_aux` / `relay_stream_proxy` / `official_aux` sibling home) still use umask `fs::write`.
 - 08 Path scope and silent replay — S4 leftover, N11, N9 — code commit `62f55936`, candidate `87743f68…82db`, implementation approval `D08-IMPL-1`; archive `slices/08-path-scope-and-silent-replay.md`. Residual: desktop attachments unfiltered; `.grok` / `agent-home-official` `config.toml` not denied; stale `stream.rs` replay comment.
+- 09 Docs match the leftover posture — D7 leftover — code commit `a1d3fa5a`, candidate `78db65f7…9e65`, implementation approval `D09-IMPL-1`; archive `slices/09-docs-match-the-leftover-posture.md`. Residual: `channelSchemaCatalog.ts` ACL default still `"*"`; `channelHealth` exact-`*` only; other README locales unchanged.
 
 ## Now
-### 09 Docs match the leftover posture
-Goal: remote-security.md, README_EN.md, SECURITY.md state React-vs-host confirm, CLI-install verification, and CI pin-check reality. Remote IM user-facing copy and `docs/llm-wiki/remote-im.md` stop offering `*` for allow-from (i18n keys in `settings-remoteIm.ts` across all 15 locales, `en` authority) and the Remote IM panel save-time check refuses `*`-containing values, matching the slice 02 bridge default. (Amended by coordinator after `D02-DRAFT-1`: within authority under AGENTS "Docs must match code defaults after each slice that changes a default" and the locked R4 decision "error text must not recommend `*`".)
-Provides: D7 leftover
-Depends on: 01, 02, 03, 05
-Target membership: inside
-Out: Marketing copy unrelated to these defaults.
+None — target complete
