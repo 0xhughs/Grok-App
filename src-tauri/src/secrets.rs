@@ -584,30 +584,28 @@ pub fn save_secrets(s: &SecretsFile) -> Result<(), String> {
                     }
                     disk.keychain_has_stt_custom = false;
                 }
-                m => {
-                    match serde_json::to_string(m) {
-                        Ok(json) => {
-                            if let Err(e) = keychain_set(KEY_STT_CUSTOM, &json) {
-                                tracing::warn!(
-                                    target: "grok_app::secrets",
-                                    error = %e,
-                                    "failed to write custom STT keys to keychain; falling back to private file storage"
-                                );
-                                keychain_failed = true;
-                            } else {
-                                disk.keychain_has_stt_custom = true;
-                            }
-                        }
-                        Err(e) => {
+                m => match serde_json::to_string(m) {
+                    Ok(json) => {
+                        if let Err(e) = keychain_set(KEY_STT_CUSTOM, &json) {
                             tracing::warn!(
                                 target: "grok_app::secrets",
                                 error = %e,
-                                "failed to serialize custom STT keys; falling back to private file storage"
+                                "failed to write custom STT keys to keychain; falling back to private file storage"
                             );
                             keychain_failed = true;
+                        } else {
+                            disk.keychain_has_stt_custom = true;
                         }
                     }
-                }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "grok_app::secrets",
+                            error = %e,
+                            "failed to serialize custom STT keys; falling back to private file storage"
+                        );
+                        keychain_failed = true;
+                    }
+                },
             }
         }
 
@@ -1179,7 +1177,8 @@ mod tests {
 
     #[test]
     fn save_secrets_fallback_to_private_file() {
-        let tmp = std::env::temp_dir().join(format!("grok-secrets-fallback-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("grok-secrets-fallback-{}", std::process::id()));
         let _ = fs::create_dir_all(&tmp);
         let path = tmp.join("secrets.json");
         let s = SecretsFile {
@@ -1189,8 +1188,14 @@ mod tests {
         };
         assert!(write_disk_secrets(&path, &s).is_ok());
         let read_back = read_disk_secrets(&path);
-        assert_eq!(read_back.official_api_key.as_deref(), Some("fallback-official-key"));
-        assert_eq!(read_back.relay_api_key.as_deref(), Some("fallback-relay-key"));
+        assert_eq!(
+            read_back.official_api_key.as_deref(),
+            Some("fallback-official-key")
+        );
+        assert_eq!(
+            read_back.relay_api_key.as_deref(),
+            Some("fallback-relay-key")
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

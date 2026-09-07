@@ -916,7 +916,10 @@ command = \"y\"
 
             // Make the file more permissive (0644) and verify rewrite restores 0600
             fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
-            assert_eq!(fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o644);
+            assert_eq!(
+                fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+                0o644
+            );
 
             write_private_agent_home_file(&file, b"test = 456\n").unwrap();
             let meta2 = fs::metadata(&file).unwrap();

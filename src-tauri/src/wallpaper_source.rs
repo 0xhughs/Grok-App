@@ -627,7 +627,9 @@ pub(crate) fn run_grok_headless(
     );
 
     let mut cmd = Command::new(cli_path);
-    cmd.args(build_wallpaper_headless_args(prompt, schema, max_turns, is_yolo));
+    cmd.args(build_wallpaper_headless_args(
+        prompt, schema, max_turns, is_yolo,
+    ));
     // Headless background-wait policy (CLI 0.2.117+); soft-fail older builds.
     {
         let ver = crate::cli_probe::read_version_of(std::path::Path::new(cli_path));
@@ -1771,7 +1773,10 @@ and https://pbs.twimg.com/media/HNccFG2X0AE8gQ6.jpg?format=jpg&name=small
         assert!(ask_args.contains(&"--no-subagents".into()));
         assert!(ask_args.contains(&"--disallowed-tools".into()));
         assert!(!ask_args.contains(&"--always-approve".into()));
-        let dt_idx = ask_args.iter().position(|x| x == "--disallowed-tools").unwrap();
+        let dt_idx = ask_args
+            .iter()
+            .position(|x| x == "--disallowed-tools")
+            .unwrap();
         let dt_val = &ask_args[dt_idx + 1];
         assert!(dt_val.contains("run_terminal_cmd"));
         assert!(dt_val.contains("write"));

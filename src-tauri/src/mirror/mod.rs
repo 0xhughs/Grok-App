@@ -255,7 +255,10 @@ impl MirrorHost {
             .unwrap_or(g.publish_tunnel)
     }
 
-    pub async fn set_publish_tunnel(self: &Arc<Self>, publish: bool) -> Result<MirrorStatus, String> {
+    pub async fn set_publish_tunnel(
+        self: &Arc<Self>,
+        publish: bool,
+    ) -> Result<MirrorStatus, String> {
         let (port, token, need_start_tunnel, need_stop_tunnel) = {
             let mut g = self.inner.lock();
             let prev = g.publish_tunnel;
@@ -269,7 +272,10 @@ impl MirrorHost {
                 tracing::info!(publish_tunnel = effective, "mirror: publish tunnel toggled");
             }
             if let Some(r) = g.runtime.as_mut() {
-                let need_start = effective && r.tunnel.is_none() && r.phase != MirrorPhase::Live && r.phase != MirrorPhase::WaitingTunnel;
+                let need_start = effective
+                    && r.tunnel.is_none()
+                    && r.phase != MirrorPhase::Live
+                    && r.phase != MirrorPhase::WaitingTunnel;
                 let need_stop = !effective && r.tunnel.is_some();
                 if need_start {
                     r.phase = MirrorPhase::WaitingTunnel;
@@ -298,7 +304,8 @@ impl MirrorHost {
         } else if need_start_tunnel {
             match tunnel::start_quick_tunnel(port).await {
                 Ok(started) => {
-                    let public = format!("{}/t/{}/", started.public_url.trim_end_matches('/'), token);
+                    let public =
+                        format!("{}/t/{}/", started.public_url.trim_end_matches('/'), token);
                     let mut g = self.inner.lock();
                     if let Some(r) = g.runtime.as_mut() {
                         r.phase = MirrorPhase::Live;
@@ -990,7 +997,10 @@ mod tests {
             .get(reqwest::header::CONTENT_SECURITY_POLICY)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        assert!(csp.contains("default-src 'self'"), "CSP header missing on index response");
+        assert!(
+            csp.contains("default-src 'self'"),
+            "CSP header missing on index response"
+        );
         let body = index.text().await.unwrap_or_default();
         assert!(
             !body.contains("__MIRROR__"),
@@ -1076,7 +1086,10 @@ mod tests {
             .get(reqwest::header::CONTENT_SECURITY_POLICY)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        assert!(csp.contains("default-src 'self'"), "CSP header missing on placeholder");
+        assert!(
+            csp.contains("default-src 'self'"),
+            "CSP header missing on placeholder"
+        );
         let body = res.text().await.unwrap_or_default();
         assert!(
             !body.contains("__MIRROR__"),
@@ -1124,7 +1137,10 @@ mod tests {
         assert!(!st.publish_tunnel);
         assert!(!st.allow_remote_yolo);
         let url = st.public_url.expect("public_url");
-        assert!(url.contains("127.0.0.1"), "default public url should be loopback: {url}");
+        assert!(
+            url.contains("127.0.0.1"),
+            "default public url should be loopback: {url}"
+        );
 
         host.stop().await.expect("stop");
     }

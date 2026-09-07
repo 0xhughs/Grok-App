@@ -386,14 +386,26 @@ mod tests {
 
         with_isolated_roots(&project, &app, false, || {
             assert!(!is_allowed(&secrets), "secrets.json should be denied");
-            assert!(!is_allowed(&session_api), "session-api.json should be denied");
-            assert!(!is_allowed(&auth_json), "agent-home/auth.json should be denied");
-            assert!(!is_allowed(&remote_im_cfg), "remote-im/config.json should be denied");
+            assert!(
+                !is_allowed(&session_api),
+                "session-api.json should be denied"
+            );
+            assert!(
+                !is_allowed(&auth_json),
+                "agent-home/auth.json should be denied"
+            );
+            assert!(
+                !is_allowed(&remote_im_cfg),
+                "remote-im/config.json should be denied"
+            );
             assert!(!is_allowed(&id_rsa), ".ssh/id_rsa should be denied");
             assert!(!is_allowed(&ssh_dir), ".ssh directory should be denied");
             assert!(!is_allowed(&aws_cred), ".aws/credentials should be denied");
             assert!(!is_allowed(&gpg_key), ".gnupg/secring.gpg should be denied");
-            assert!(!is_allowed(&gh_hosts), ".config/gh/hosts.yml should be denied");
+            assert!(
+                !is_allowed(&gh_hosts),
+                ".config/gh/hosts.yml should be denied"
+            );
 
             assert!(require_allowed(&secrets).is_err());
             assert!(require_allowed(&id_rsa).is_err());

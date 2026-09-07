@@ -590,7 +590,9 @@ mod tests {
 
         for &method in WRITE_METHODS {
             let res = dispatch(method, json!({}), &host, None, Some(&mgr)).await;
-            let err = res.expect_err(&format!("write method {method} should be blocked in read-only"));
+            let err = res.expect_err(&format!(
+                "write method {method} should be blocked in read-only"
+            ));
             assert_eq!(err.code, "UNSUPPORTED");
             assert_eq!(
                 err.message, "unsupported method: mirror is in read-only mode",
@@ -599,11 +601,19 @@ mod tests {
         }
 
         // Also test arbitrary unknown and desktop-only methods in read-only mode
-        for arbitrary in &["unknown.method", "pick_directory", "account.login", "fs_read_file"] {
+        for arbitrary in &[
+            "unknown.method",
+            "pick_directory",
+            "account.login",
+            "fs_read_file",
+        ] {
             let res = dispatch(arbitrary, json!({}), &host, None, Some(&mgr)).await;
             let err = res.expect_err(&format!("arbitrary method {arbitrary} should be blocked"));
             assert_eq!(err.code, "UNSUPPORTED");
-            assert_eq!(err.message, "unsupported method: mirror is in read-only mode");
+            assert_eq!(
+                err.message,
+                "unsupported method: mirror is in read-only mode"
+            );
         }
     }
 
@@ -650,7 +660,10 @@ mod tests {
             let classified = READ_METHODS.contains(&m) || WRITE_METHODS.contains(&m);
             assert!(classified, "active dispatch method {m} must be classified");
         }
-        assert_eq!(READ_METHODS.len() + WRITE_METHODS.len(), all_active_methods.len());
+        assert_eq!(
+            READ_METHODS.len() + WRITE_METHODS.len(),
+            all_active_methods.len()
+        );
 
         // 3. When read_only is false, write methods must not fail with read-only unsupported error
         let host_rw = make_test_host(false, false);
@@ -703,7 +716,9 @@ mod tests {
                 None,
             )
             .await;
-            let err = res.expect_err(&format!("policy {relaxed} must be refused when allow_remote_yolo is false"));
+            let err = res.expect_err(&format!(
+                "policy {relaxed} must be refused when allow_remote_yolo is false"
+            ));
             assert_eq!(err.code, "HOST_ERROR");
             assert!(
                 err.message.contains("refusing remote send"),
@@ -764,7 +779,10 @@ mod tests {
         .await;
         let err = res.expect_err("non-registered project path should be rejected");
         assert_eq!(err.code, "BAD_PARAMS");
-        assert_eq!(err.message, "projectPath must be a registered, trusted project");
+        assert_eq!(
+            err.message,
+            "projectPath must be a registered, trusted project"
+        );
 
         // 2. Registered untrusted project path
         let mut list = store::load_projects();
@@ -799,7 +817,10 @@ mod tests {
         .await;
         let err2 = res2.expect_err("registered untrusted project path should be rejected");
         assert_eq!(err2.code, "BAD_PARAMS");
-        assert_eq!(err2.message, "projectPath must be a registered, trusted project");
+        assert_eq!(
+            err2.message,
+            "projectPath must be a registered, trusted project"
+        );
 
         // Clean up project
         let mut clean_list = store::load_projects();

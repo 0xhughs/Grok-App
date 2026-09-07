@@ -2581,7 +2581,10 @@ A UI screenshot.
         assert!(ask_args.contains(&"--no-subagents".into()));
         assert!(ask_args.contains(&"--disallowed-tools".into()));
         assert!(!ask_args.contains(&"--always-approve".into()));
-        let dt_idx = ask_args.iter().position(|x| x == "--disallowed-tools").unwrap();
+        let dt_idx = ask_args
+            .iter()
+            .position(|x| x == "--disallowed-tools")
+            .unwrap();
         let dt_val = &ask_args[dt_idx + 1];
         assert!(dt_val.contains("run_terminal_cmd"));
         assert!(dt_val.contains("write"));

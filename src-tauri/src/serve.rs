@@ -616,10 +616,7 @@ pub fn build_serve_command(
     remote: Option<&str>,
 ) -> std::process::Command {
     let mut cmd = std::process::Command::new(cli_path);
-    cmd.arg("agent")
-        .arg("serve")
-        .arg("--bind")
-        .arg(bind);
+    cmd.arg("agent").arg("serve").arg("--bind").arg(bind);
     if let Some(r) = remote {
         cmd.arg("--remote").arg(r);
     }

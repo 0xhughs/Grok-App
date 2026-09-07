@@ -392,7 +392,12 @@ pub fn is_trusted_origin(origin_val: &str) -> bool {
                     return false;
                 }
             } else {
-                rest.split(':').next().unwrap_or("").split('/').next().unwrap_or("")
+                rest.split(':')
+                    .next()
+                    .unwrap_or("")
+                    .split('/')
+                    .next()
+                    .unwrap_or("")
             };
             if host_part == "127.0.0.1" || host_part == "localhost" || host_part == "::1" {
                 return true;
@@ -423,7 +428,10 @@ pub fn validate_proxy_headers(headers: &HeaderMap) -> Result<(), (StatusCode, &'
 
     if let Some(sfs) = headers.get("sec-fetch-site").and_then(|s| s.to_str().ok()) {
         if sfs.trim().eq_ignore_ascii_case("cross-site") {
-            return Err((StatusCode::FORBIDDEN, "Forbidden: cross-site fetch rejected"));
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Forbidden: cross-site fetch rejected",
+            ));
         }
     }
 

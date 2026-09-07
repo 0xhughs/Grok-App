@@ -1396,7 +1396,8 @@ mod recycle_tests {
             last_stream_progress: now,
             last_stall_emit: None,
             stall_soft_emits: 0,
-            journal_throttle: crate::journal_throttle::JournalWriteThrottle::with_default_interval(),
+            journal_throttle: crate::journal_throttle::JournalWriteThrottle::with_default_interval(
+            ),
             open_tool_ids: std::collections::HashSet::new(),
             open_tool_seen_at: std::collections::HashMap::new(),
             terminal_tool_ids: std::collections::HashSet::new(),
@@ -1429,10 +1430,7 @@ mod recycle_tests {
 
         // Host recomputes from pending request
         let resolved = mgr.compute_resolved_scope("s1", "allow_session");
-        assert_eq!(
-            resolved.as_deref(),
-            Some("run_terminal_command:git status")
-        );
+        assert_eq!(resolved.as_deref(), Some("run_terminal_command:git status"));
 
         // Decision not allow_session -> None
         assert_eq!(mgr.compute_resolved_scope("s1", "allow_once"), None);
