@@ -102,16 +102,22 @@ No file outside the Files constraint changes.
 none (Proposed; draft `D03-DRAFT-1` produced this page, no code)
 
 ## Review
-Plan approval: none
+Plan approval: none (`D03-PLAN-1` REJECT_PLAN; see below)
 Implementation approval: none
 Each result records dispatch ID, reviewer identity, verdict, contract identity, snapshot identity, evidence, and criterion-specific blockers.
+
+### D03-PLAN-1 — REJECT_PLAN (recorded verbatim summary)
+Reviewer: Cursor Task generalPurpose subagent, fresh context, agent ID `bc-f13a47d0-9c79-51eb-abd4-a397a8f66912`, worktree `/tmp/loop-review/D03-PLAN-1` @ `d98db113`.
+Contract `116fc217…070e` (match). Candidate before/after `2a3620d1…390b` (unchanged, clean-tree). Porcelain empty. Code vs `fd142233` empty.
+Judgments: (a) main-only window-label check satisfies Now 03 / locked D1; (b) `acp_server_addr` in field gate is in authority (audit §8, same command); (c) field-gate reason real (`FilesWorkspace` / theme-editor); (d) helper tests + greps honest except one unsatisfiable grep; (e) one coherent slice.
+Blocker 1: Done when / N1 grep ``rg -n 'validate_label\(' src-tauri/src/side_browser_host.rs` → exactly **one** match`` is unsatisfiable together with “`label_rules` still passes”. Today the pattern matches the definition, the `validate_side_label` call, `get_side_webview`, `eval`, and two `label_rules` lines (6). After a correct impl it is still ≥4 (def + one production call + two test asserts). Repair: count production call sites excluding `fn` / `mod tests`, or name the exact remaining lines.
 
 ## Loop state
 Execution mode / tool adapter: **Cursor Cloud Agent** (adapter substitution, recorded 2026-09-06; full rationale and veto clause in `slices/01-restore-real-ci-pins.md` Loop state). Coordinator = this Cursor Cloud Agent session (sole writer of protocol files). Builder = `Task(generalPurpose)` with BUILDER.md inlined, workspace inherit (`/workspace`). Reviewer = `Task(generalPurpose)` with REVIEWER.md inlined, fresh context per review, isolated `git worktree add --detach /tmp/loop-review/<dispatch> <HEAD>` created after confirming the checkout is clean; tool-layer write restriction unavailable — mitigated by worktree isolation, explicit no-write instruction, and coordinator identity recompute after every review. Task results are terminal on return. No second coordinator.
 Coordinator: Cursor Cloud Agent session, branch `cursor/grokbuild-followup-loop-c341` off `origin/main` `ea4ec712` (= `c66b3ec7` + pack files only).
-Worker / role / phase: Reviewer / plan review / slice 03
-Dispatch ID / launch state / input identity: `D03-PLAN-1` / launching / candidate `2a3620d1…390b` (code HEAD `fd142233`), baseline `2a3620d1…390b`, contract `116fc217…070e`, draft `D03-DRAFT-1`
-Pending result / last consumed dispatch: none / `D03-DRAFT-1`
+Worker / role / phase: Builder / revise proposal / slice 03
+Dispatch ID / launch state / input identity: `D03-DRAFT-2` / launching / candidate `2a3620d1…390b`, contract `116fc217…070e` (to be revised), rejection 1, gap = D03-PLAN-1 blocker 1
+Pending result / last consumed dispatch: none / `D03-PLAN-1`
 Snapshot capture and recheck commands / coverage / exclusions:
 - Tool: `bash grokbuild-followup-project-loop/artifacts/identity.sh both [REPO]` (read-only). Candidate = sha256 over `git ls-tree -r HEAD` (mode/type/blob/path) with `grokbuild-followup-project-loop/` excluded, valid only when `git status --porcelain=v1` outside the pack dir is empty; otherwise the script emits a SHA-256 manifest (mode, digest, path, symlink target) of tracked+untracked covered paths and uses its digest. Contract = sha256 over AGENTS.md, LOOP.md, BUILDER.md, REVIEWER.md, `artifacts/identity.sh`, SLICES.md minus Run status/Release evidence/Shipped, and BUILD.md top through `## Tests`.
 - Recheck: rerun the same command; compare `CANDIDATE=` and `CONTRACT=`.
@@ -120,11 +126,12 @@ Snapshot capture and recheck commands / coverage / exclusions:
 Baseline snapshot: slice 02 shipped candidate — HEAD `fd142233dd2235cb3832a87b00bdb95d83cb74f2` (code), clean-tree, CANDIDATE `2a3620d159da5a3960a7b59e66e8908de27727a3c265ad0a0760235a5bb7390b`
 Contract identity: `116fc21710bd21f874c157b8ffb1073d694673a079710c586fb8bcdbeb06070e`
 Candidate snapshot: HEAD `fd142233dd2235cb3832a87b00bdb95d83cb74f2` (code commit), clean-tree, CANDIDATE `2a3620d159da5a3960a7b59e66e8908de27727a3c265ad0a0760235a5bb7390b`
-Rejection count: 0
+Rejection count: 1
 Consecutive no-progress repairs: 0
-Open acceptance gaps / prior failing evidence: none
+Open acceptance gaps / prior failing evidence: D03-PLAN-1 blocker 1 (`validate_label(` grep “exactly one” vs `label_rules` still asserting `validate_label(`)
 Repair awaiting review: false
-Review events: none
+Review events:
+- E1 / `D03-PLAN-1` / plan / REJECT_PLAN / contract `116fc217…070e`, candidate `2a3620d1…390b` / gap: blocker 1 / rejection count 0→1
 Budget limit / consumed / measurement: Not configured; do not invent a budget
 Blocker / resume status / resume action / recheck condition / deadline: none
 Advance phase: next selected (03); BUILD replaced with Proposed page
@@ -132,7 +139,7 @@ Next slice ID / draft: 04 (after 03 ships)
 Environment note: `cargo test` is linkable here — webkit2gtk-4.1 2.52.6, gtk+-3.0 3.24.41, libsoup-3.0, javascriptcoregtk-4.1, ayatana-appindicator3, librsvg installed via apt on 2026-09-06; rustc 1.98.1 stable default.
 
 ## Status
-Proposed (draft `D03-DRAFT-1`; pending `D03-PLAN-1`)
+Proposed (`D03-PLAN-1` rejected; Builder revising the unsatisfiable N1 grep)
 
 ## Next
-Independent plan review `D03-PLAN-1` in isolated worktree. On APPROVE_PLAN → Not started, Builder `D03-BUILD-1`. On REJECT_PLAN → Proposed, Builder revises.
+Builder `D03-DRAFT-2` revises only blocker 1. Then `D03-PLAN-2`.
